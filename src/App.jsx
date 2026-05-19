@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 // Backend host configuration
-const API_BASE = 'http://localhost:8080';
+const API_BASE = '';
 const API_PREFIX = '/api/v1';
 
 export default function App() {
