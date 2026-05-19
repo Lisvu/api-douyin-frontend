@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 
 // Backend host configuration
 const API_BASE = 'http://localhost:8080';
+const API_PREFIX = '/api/v1';
 
 export default function App() {
   // --- STATE SYSTEM ---
@@ -158,7 +159,7 @@ export default function App() {
       return;
     }
 
-    const endpoint = authMode === 'register' ? '/api/register' : '/api/login';
+    const endpoint = authMode === 'register' ? `${API_PREFIX}/auth/register` : `${API_PREFIX}/auth/login`;
     const data = await apiFetch(endpoint, {
       method: 'POST',
       body: JSON.stringify({ username, password })
@@ -184,7 +185,7 @@ export default function App() {
       return;
     }
 
-    const data = await apiFetch('/api/users/delete', { method: 'POST' });
+    const data = await apiFetch(`${API_PREFIX}/users/me`, { method: 'DELETE' });
     if (data && data.success) {
       setToken('');
       setUser(null);
@@ -195,7 +196,7 @@ export default function App() {
   // Fetch recommended videos feed
   const fetchRecommendations = async () => {
     setIsLoadingFeed(true);
-    const data = await apiFetch('/api/videos/recommend');
+    const data = await apiFetch(`${API_PREFIX}/videos/recommendations`);
     setIsLoadingFeed(false);
 
     if (data && data.success) {
@@ -208,12 +209,12 @@ export default function App() {
 
   // Record a view log for the current video
   const recordVideoView = async (videoId) => {
-    await apiFetch(`/api/videos/${videoId}/view`, { method: 'POST' });
+    await apiFetch(`${API_PREFIX}/videos/${videoId}/views`, { method: 'POST' });
   };
 
   // Toggle Video Like (点赞)
   const handleToggleLike = async (videoId) => {
-    const data = await apiFetch(`/api/videos/${videoId}/like`, { method: 'POST' });
+    const data = await apiFetch(`${API_PREFIX}/videos/${videoId}/like`, { method: 'PUT' });
     if (data && data.success) {
       // Update local state smoothly
       setVideos(prev => prev.map(v => {
@@ -227,7 +228,7 @@ export default function App() {
 
   // Reset entire watch history
   const handleResetViews = async () => {
-    const data = await apiFetch('/api/videos/reset-views', { method: 'POST' });
+    const data = await apiFetch(`${API_PREFIX}/users/me/views`, { method: 'DELETE' });
     if (data && data.success) {
       showToast(data.message);
       fetchRecommendations();
@@ -236,12 +237,12 @@ export default function App() {
 
   // Fetch developer console metrics and logs
   const fetchDevDashboardData = async () => {
-    const statsData = await apiFetch('/api/admin/stats');
+    const statsData = await apiFetch(`${API_PREFIX}/admin/stats`);
     if (statsData && statsData.success) {
       setDevStats(statsData.stats);
     }
 
-    const logsData = await apiFetch('/api/admin/logs');
+    const logsData = await apiFetch(`${API_PREFIX}/admin/request-logs`);
     if (logsData && logsData.success) {
       setDevLogs(logsData.logs || []);
     }
@@ -249,7 +250,7 @@ export default function App() {
 
   // Fetch my uploaded videos (paginated)
   const fetchMyVideos = async (page = 1) => {
-    const data = await apiFetch(`/api/videos/my?page=${page}&limit=6`);
+    const data = await apiFetch(`${API_PREFIX}/users/me/videos?page=${page}&limit=6`);
     if (data && data.success) {
       setMyVideos(data.videos || []);
       setMyVideosPagination({
@@ -293,7 +294,7 @@ export default function App() {
       });
     }, 200);
 
-    const data = await apiFetch('/api/videos/publish', {
+    const data = await apiFetch(`${API_PREFIX}/videos`, {
       method: 'POST',
       body: formData
     });
@@ -328,7 +329,7 @@ export default function App() {
     e.stopPropagation(); // Avoid triggering video cover clicks
     if (!window.confirm("确定要删除这个视频吗？")) return;
 
-    const data = await apiFetch(`/api/videos/${videoId}`, { method: 'DELETE' });
+    const data = await apiFetch(`${API_PREFIX}/videos/${videoId}`, { method: 'DELETE' });
     if (data && data.success) {
       showToast('视频已成功下架！');
       // Refresh my videos grid
