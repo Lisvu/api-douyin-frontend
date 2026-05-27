@@ -493,7 +493,7 @@ export default function App() {
             <div className="username">UID: {user?.id} • {user?.username}</div>
             <div className="role">系统开发者 / 体验员</div>
           </div>
-          <button className="logout-btn" onClick={handleDeleteAccount} style={{ background: 'rgba(254, 9, 121, 0.05)', color: '#fe0979', borderColor: 'rgba(254, 9, 121, 0.2)' }}>
+          <button className="logout-btn danger" onClick={handleDeleteAccount}>
             注销账户
           </button>
           <button className="logout-btn" onClick={() => setToken('')}>
@@ -634,12 +634,12 @@ export default function App() {
 
                     {/* Publish video trigger */}
                     <button className="action-item-button special-action" onClick={() => setIsUploadOpen(true)} title="发布我的新视频">
-                      <div className="action-icon-circle" style={{ background: 'rgba(254, 9, 121, 0.1)', borderColor: 'rgba(254, 9, 121, 0.3)' }}>
-                        <svg style={{ fill: 'var(--primary-pink)' }} viewBox="0 0 24 24">
+                      <div className="action-icon-circle publish-icon">
+                        <svg viewBox="0 0 24 24">
                           <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                         </svg>
                       </div>
-                      <span className="action-count" style={{ color: 'var(--primary-pink)' }}>发视频</span>
+                      <span className="action-count publish-label">发视频</span>
                     </button>
 
                     {/* My videos listing trigger */}
@@ -953,7 +953,7 @@ export default function App() {
                     />
                   </div>
                   {uploadCover && (
-                    <div className="file-name-indicator" style={{ color: 'var(--primary-pink)' }}>
+                    <div className="file-name-indicator cover-file">
                       🖼️ 选定封面: {uploadCover.name}
                     </div>
                   )}
