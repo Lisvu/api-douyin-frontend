@@ -21,6 +21,7 @@ export default function App() {
   const [allViewed, setAllViewed] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
   const [playTriggerAnim, setPlayTriggerAnim] = useState(false); // Play overlay animation
+  const [likingVideoId, setLikingVideoId] = useState(null);
 
   // Modals & Drawers state
   const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -110,7 +111,33 @@ export default function App() {
     setTimeout(() => setToast(null), 4000);
   };
 
-  // Helper to format url pathways from backend (absolute vs local upload)
+  // Normalize feed video fields: canonical liked / likeCount
+  const normalizeFeedVideo = (video) => {
+    if (!video) return video;
+    const liked = typeof video.liked === 'boolean'
+      ? video.liked
+      : (video.is_liked === 1 || video.is_liked === true);
+    const likeCount = video.likeCount ?? video.likes_count ?? video.likesCount ?? 0;
+    return {
+      ...video,
+      liked,
+      likeCount,
+      is_liked: liked ? 1 : 0,
+      likes_count: likeCount,
+      likesCount: likeCount,
+    };
+  };
+
+  const updateVideoLikeState = (videoId, liked, likeCount) => {
+    setVideos(prev => prev.map(v => {
+      if (v.id !== videoId) return v;
+      return normalizeFeedVideo({ ...v, liked, likeCount });
+    }));
+    setMyVideos(prev => prev.map(v => {
+      if (v.id !== videoId) return v;
+      return normalizeFeedVideo({ ...v, liked, likeCount });
+    }));
+  };
   const getMediaUrl = (url) => {
     if (!url) return '';
     return url.startsWith('http') ? url : `${API_BASE}${url}`;
@@ -200,7 +227,7 @@ export default function App() {
     setIsLoadingFeed(false);
 
     if (data && data.success) {
-      setVideos(data.videos || []);
+      setVideos((data.videos || []).map(normalizeFeedVideo));
       setAllViewed(data.allViewed);
       setTotalCount(data.totalCount);
       setCurrentIndex(0);
@@ -212,17 +239,32 @@ export default function App() {
     await apiFetch(`${API_PREFIX}/videos/${videoId}/views`, { method: 'POST' });
   };
 
-  // Toggle Video Like (点赞)
-  const handleToggleLike = async (videoId) => {
+  // Toggle Video Like (点赞 / 取消点赞)
+  const handleToggleLike = async (videoId, e) => {
+    e?.stopPropagation();
+    if (!token) {
+      showToast('请先登录后再点赞', true);
+      return;
+    }
+    if (likingVideoId === videoId) {
+      return;
+    }
+
+    setLikingVideoId(videoId);
     const data = await apiFetch(`${API_PREFIX}/videos/${videoId}/like`, { method: 'PUT' });
-    if (data && data.success) {
-      // Update local state smoothly
-      setVideos(prev => prev.map(v => {
-        if (v.id === videoId) {
-          return { ...v, is_liked: data.liked ? 1 : 0, likes_count: data.likes_count };
-        }
-        return v;
-      }));
+    setLikingVideoId(null);
+
+    if (!data) {
+      return;
+    }
+
+    if (data.success) {
+      const liked = Boolean(data.liked);
+      const likeCount = data.likeCount ?? data.likes_count ?? 0;
+      updateVideoLikeState(videoId, liked, likeCount);
+      showToast(liked ? '已点赞' : '已取消点赞');
+    } else {
+      showToast(data.message || '点赞操作失败', true);
     }
   };
 
@@ -252,7 +294,7 @@ export default function App() {
   const fetchMyVideos = async (page = 1) => {
     const data = await apiFetch(`${API_PREFIX}/users/me/videos?page=${page}&limit=6`);
     if (data && data.success) {
-      setMyVideos(data.videos || []);
+      setMyVideos((data.videos || []).map(normalizeFeedVideo));
       setMyVideosPagination({
         page: data.pagination.page,
         totalPages: data.pagination.totalPages
@@ -611,15 +653,19 @@ export default function App() {
 
                     {/* Like button */}
                     <button
-                      className={`action-item-button ${activeVideo.is_liked === 1 ? 'liked' : ''}`}
-                      onClick={() => handleToggleLike(activeVideo.id)}
+                      className={`action-item-button ${activeVideo.liked ? 'liked' : ''} ${likingVideoId === activeVideo.id ? 'is-loading' : ''}`}
+                      onClick={(e) => handleToggleLike(activeVideo.id, e)}
+                      disabled={likingVideoId === activeVideo.id}
+                      aria-pressed={activeVideo.liked}
+                      aria-label={activeVideo.liked ? '取消点赞' : '点赞'}
+                      title={activeVideo.liked ? '取消点赞' : '点赞'}
                     >
                       <div className="action-icon-circle">
                         <svg viewBox="0 0 24 24">
                           <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
                         </svg>
                       </div>
-                      <span className="action-count">{activeVideo.likes_count || 0}</span>
+                      <span className="action-count">{activeVideo.likeCount ?? 0}</span>
                     </button>
 
                     {/* Quick Reset Views log */}
@@ -698,7 +744,7 @@ export default function App() {
                             <svg viewBox="0 0 24 24">
                               <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
                             </svg>
-                            <span>{mv.likesCount}</span>
+                            <span>{mv.likeCount ?? mv.likesCount ?? mv.likes_count ?? 0}</span>
                           </div>
                         </div>
                       ))

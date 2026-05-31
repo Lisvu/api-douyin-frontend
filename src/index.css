@@ -731,6 +731,15 @@ body {
   border-color: rgba(253, 164, 175, 0.75);
 }
 
+.action-item-button.is-loading {
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.action-item-button:disabled {
+  cursor: not-allowed;
+}
+
 .action-item-button.special-action .action-icon-circle {
   background: #000;
   border-color: rgba(186, 230, 253, 0.68);
