@@ -4,11 +4,21 @@ import React, { useState, useEffect, useRef } from 'react';
 const API_BASE = '';
 const API_PREFIX = '/api/v1';
 
+const loadStoredUser = () => {
+  try {
+    return JSON.parse(localStorage.getItem('user')) || null;
+  } catch {
+    localStorage.removeItem('user');
+    return null;
+  }
+};
+
 export default function App() {
   // --- STATE SYSTEM ---
   // Auth state
   const [token, setToken] = useState(localStorage.getItem('token') || '');
-  const [user, setUser] = useState(JSON.parse(localStorage.getItem('user')) || null);
+  const [user, setUser] = useState(loadStoredUser());
+  const [isCheckingSession, setIsCheckingSession] = useState(!!localStorage.getItem('token'));
   const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -17,6 +27,7 @@ export default function App() {
   const [videos, setVideos] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
   const [isLoadingFeed, setIsLoadingFeed] = useState(false);
   const [allViewed, setAllViewed] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
@@ -65,8 +76,7 @@ export default function App() {
   // Fetch initial feed when logged in
   useEffect(() => {
     if (token) {
-      fetchRecommendations();
-      fetchDevDashboardData();
+      initializeAuthenticatedSession();
     }
   }, [token]);
 
@@ -88,6 +98,7 @@ export default function App() {
     if (videos.length > 0 && videoRef.current) {
       setIsPlaying(false);
       videoRef.current.load();
+      videoRef.current.muted = isMuted;
       
       // Auto-play the new video once loaded
       const playPromise = videoRef.current.play();
@@ -104,6 +115,12 @@ export default function App() {
       }
     }
   }, [currentIndex, videos]);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.muted = isMuted;
+    }
+  }, [isMuted]);
 
   // --- HELPER UTILITIES ---
   const showToast = (message, isError = false) => {
@@ -165,16 +182,37 @@ export default function App() {
         // Clear session if unauthorized
         setToken('');
         setUser(null);
+        setIsCheckingSession(false);
         showToast('登录会话已过期，请重新登录', true);
         return null;
       }
 
-      return await response.json();
+      const text = await response.text();
+      return text ? JSON.parse(text) : {};
     } catch (err) {
       showToast('网络请求失败，请确保后端服务已启动！', true);
       console.error(err);
       return null;
     }
+  };
+
+  const initializeAuthenticatedSession = async () => {
+    setIsCheckingSession(true);
+    const currentUser = await fetchCurrentUser();
+    if (currentUser) {
+      await fetchRecommendations();
+      await fetchDevDashboardData();
+    }
+    setIsCheckingSession(false);
+  };
+
+  const fetchCurrentUser = async () => {
+    const data = await apiFetch(`${API_PREFIX}/users/me`);
+    if (data && data.success) {
+      setUser(data.user);
+      return data.user;
+    }
+    return null;
   };
 
   // --- API SERVICE CALLS ---
@@ -400,6 +438,11 @@ export default function App() {
     setTimeout(() => setPlayTriggerAnim(false), 500);
   };
 
+  const toggleMuted = (e) => {
+    e.stopPropagation();
+    setIsMuted(prev => !prev);
+  };
+
   const handleNextVideo = () => {
     if (currentIndex < videos.length - 1) {
       setCurrentIndex(prev => prev + 1);
@@ -449,6 +492,17 @@ export default function App() {
 
   // --- RENDERING SCREENS ---
   // Auth Screen (Login/Register)
+  if (isCheckingSession && token) {
+    return (
+      <div className="auth-wrapper">
+        <div className="phone-loading-screen" style={{ position: 'relative', zIndex: 1 }}>
+          <div className="loading-spinner" />
+          <p>正在恢复登录态...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!token) {
     return (
       <div className="auth-wrapper">
@@ -538,7 +592,7 @@ export default function App() {
           <button className="logout-btn danger" onClick={handleDeleteAccount}>
             注销账户
           </button>
-          <button className="logout-btn" onClick={() => setToken('')}>
+          <button className="logout-btn" onClick={() => { setToken(''); setUser(null); }}>
             <svg style={{ width: 14, height: 14, fill: 'currentColor' }} viewBox="0 0 24 24">
               <path d="M16 13v-2H7V9l-5 4 5 4v-2h9zM20 3h-9c-1.1 0-2 .9-2 2v4h2V5h9v14h-9v-4H9v4c0 1.1.9 2 2 2h9c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" />
             </svg>
@@ -604,6 +658,8 @@ export default function App() {
                       ref={videoRef}
                       className="tiktok-video"
                       loop
+                      muted={isMuted}
+                      preload="metadata"
                       playsInline
                       src={getMediaUrl(activeVideo.video_url)}
                       poster={activeVideo.cover_url ? getMediaUrl(activeVideo.cover_url) : undefined}
@@ -622,6 +678,14 @@ export default function App() {
                       )}
                     </div>
                   </div>
+
+                  <button className="video-mute-button" onClick={toggleMuted} title={isMuted ? '打开声音' : '静音'}>
+                    {isMuted ? (
+                      <svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.62 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73L16.25 17.52c-.67.52-1.43.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                    )}
+                  </button>
 
                   {/* Video Meta Info Bottom Overlay */}
                   <div className="video-meta-overlay">

@@ -532,6 +532,36 @@ body {
   cursor: pointer;
 }
 
+.video-mute-button {
+  position: absolute;
+  top: 42px;
+  left: 16px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.46);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 20;
+  transition: background 0.2s, border-color 0.2s, transform 0.2s;
+}
+
+.video-mute-button:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.58);
+  transform: scale(1.04);
+}
+
+.video-mute-button svg {
+  width: 21px;
+  height: 21px;
+  fill: currentColor;
+}
+
 /* Custom Play Overlay */
 .video-play-overlay {
   position: absolute;
