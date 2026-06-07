@@ -51,6 +51,7 @@ export default function App() {
   // Live Developer Stats & Logs dashboard
   const [devStats, setDevStats] = useState({ users: 0, videos: 0, likes: 0, views: 0, averageResponseTimeMs: 0, totalRequestsLogged: 0 });
   const [devLogs, setDevLogs] = useState([]);
+  const [logDetailModal, setLogDetailModal] = useState(null);
 
   // UI Toast message
   const [toast, setToast] = useState(null);
@@ -488,6 +489,15 @@ export default function App() {
   const openMyVideosPanel = () => {
     setIsMyVideosOpen(true);
     fetchMyVideos(1);
+  };
+
+  const formatBody = (body) => {
+    if (!body || body.trim() === '') return '(empty)';
+    try {
+      return JSON.stringify(JSON.parse(body), null, 2);
+    } catch {
+      return body;
+    }
   };
 
   // --- RENDERING SCREENS ---
@@ -936,7 +946,24 @@ export default function App() {
                     <span className={`log-status ${log.statusCode >= 200 && log.statusCode < 300 ? 'status-2xx' : log.statusCode >= 400 && log.statusCode < 500 ? 'status-4xx' : 'status-5xx'}`}>
                       {log.statusCode}
                     </span>
-                    <span className="log-duration">{log.durationMs}ms</span>
+                    <span className="log-duration" style={{ color: log.durationMs > 500 ? '#ff4d4d' : 'inherit' }}>
+                      {log.durationMs}ms
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setLogDetailModal(log)}
+                      style={{
+                        background: 'transparent',
+                        border: 0,
+                        color: 'var(--primary-cyan)',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        marginLeft: 8,
+                        padding: 0
+                      }}
+                    >
+                      详情
+                    </button>
                   </div>
                 ))
               ) : (
@@ -1079,6 +1106,89 @@ export default function App() {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {logDetailModal && (
+        <div className="modal-overlay" onClick={() => setLogDetailModal(null)}>
+          <div
+            className="modal-content"
+            onClick={e => e.stopPropagation()}
+            style={{ maxWidth: 600, maxHeight: '80vh', overflowY: 'auto' }}
+          >
+            <button className="modal-close-btn" onClick={() => setLogDetailModal(null)}>
+              <svg viewBox="0 0 24 24">
+                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+              </svg>
+            </button>
+
+            <h3 style={{ marginBottom: 16 }}>请求详情</h3>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
+              {[
+                ['时间', logDetailModal.timestamp],
+                ['方法', logDetailModal.method],
+                ['路径', logDetailModal.url],
+                ['状态码', logDetailModal.statusCode],
+                ['耗时', `${logDetailModal.durationMs}ms`],
+              ].map(([label, value]) => (
+                <div key={label} style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 6, padding: '8px 12px' }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>{label}</div>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      color: label === '耗时' && logDetailModal.durationMs > 500 ? '#ff4d4d' : 'var(--text-main)',
+                      wordBreak: 'break-all'
+                    }}
+                  >
+                    {value}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Request Body</div>
+              <pre
+                style={{
+                  background: 'rgba(0,0,0,0.3)',
+                  borderRadius: 6,
+                  padding: 12,
+                  fontSize: 12,
+                  color: '#a8ff78',
+                  overflowX: 'auto',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                  maxHeight: 150,
+                  overflowY: 'auto',
+                  margin: 0
+                }}
+              >
+                {formatBody(logDetailModal.requestBody)}
+              </pre>
+            </div>
+
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Response Body</div>
+              <pre
+                style={{
+                  background: 'rgba(0,0,0,0.3)',
+                  borderRadius: 6,
+                  padding: 12,
+                  fontSize: 12,
+                  color: '#78c8ff',
+                  overflowX: 'auto',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                  maxHeight: 150,
+                  overflowY: 'auto',
+                  margin: 0
+                }}
+              >
+                {formatBody(logDetailModal.responseBody)}
+              </pre>
+            </div>
           </div>
         </div>
       )}
