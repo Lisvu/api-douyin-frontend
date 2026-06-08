@@ -439,6 +439,14 @@ export default function App() {
     }
   };
 
+  // Play a video from "My Videos" grid in the main player
+  const handlePlayMyVideo = (index) => {
+    setVideos(myVideos);
+    setCurrentIndex(index);
+    setIsMyVideosOpen(false);
+    setAllViewed(false);
+  };
+
   // --- ACTIONS INTERFACE ---
   const togglePlayState = () => {
     if (!videoRef.current) return;
@@ -845,8 +853,8 @@ export default function App() {
 
                   <div className="my-videos-grid">
                     {myVideos.length > 0 ? (
-                      myVideos.map(mv => (
-                        <div key={mv.id} className="grid-video-card">
+                      myVideos.map((mv, idx) => (
+                        <div key={mv.id} className="grid-video-card" onClick={() => handlePlayMyVideo(idx)}>
                           <img
                             className="grid-video-cover"
                             src={getMediaUrl(mv.cover_url)}
