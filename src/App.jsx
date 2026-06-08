@@ -58,8 +58,9 @@ export default function App() {
 
   // Ref hook to control HTML5 video player
   const videoRef = useRef(null);
-  // Scroll lock to prevent high-frequency mouse wheel trigger skipping
+  // Scroll lock to prevent high-frequency mouse wheel / touch trigger skipping
   const scrollLockRef = useRef(false);
+  const touchStartRef = useRef({ y: 0 });
 
   // --- AUTOMATIC INITIALIZATION ---
   // Save/remove session token to localStorage
@@ -122,6 +123,22 @@ export default function App() {
       videoRef.current.muted = isMuted;
     }
   }, [isMuted]);
+
+  // Keyboard navigation: ArrowUp / ArrowDown to switch videos (F03)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (!token || videos.length === 0 || allViewed) return;
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        handlePrevVideo();
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        handleNextVideo();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [token, videos.length, allViewed, currentIndex]);
 
   // --- HELPER UTILITIES ---
   const showToast = (message, isError = false) => {
@@ -458,6 +475,37 @@ export default function App() {
     }
   };
 
+  const lockScrollTransition = () => {
+    scrollLockRef.current = true;
+    setTimeout(() => {
+      scrollLockRef.current = false;
+    }, 800);
+  };
+
+  // Touch swipe navigation for mobile (F03)
+  const handleTouchStart = (e) => {
+    touchStartRef.current = { y: e.touches[0].clientY };
+  };
+
+  const handleTouchEnd = (e) => {
+    if (scrollLockRef.current) return;
+    const deltaY = touchStartRef.current.y - e.changedTouches[0].clientY;
+    const threshold = 50;
+    if (deltaY > threshold) {
+      if (currentIndex < videos.length - 1) {
+        lockScrollTransition();
+        setCurrentIndex(prev => prev + 1);
+      } else {
+        showToast('👏 您已看完所有推荐！点击侧边栏的“重置”即可从头刷起！');
+      }
+    } else if (deltaY < -threshold) {
+      if (currentIndex > 0) {
+        lockScrollTransition();
+        setCurrentIndex(prev => prev - 1);
+      }
+    }
+  };
+
   // High-precision debounced mouse scroll event listener
   const handleWheel = (e) => {
     // If transition lock is active, ignore scroll event to prevent skipping multiple videos
@@ -466,22 +514,16 @@ export default function App() {
     if (e.deltaY > 30) {
       // Scroll Down -> Next video
       if (currentIndex < videos.length - 1) {
-        scrollLockRef.current = true;
+        lockScrollTransition();
         setCurrentIndex(prev => prev + 1);
-        setTimeout(() => {
-          scrollLockRef.current = false;
-        }, 800); // 800ms lock duration matching video switch transition
       } else {
         showToast('👏 您已看完所有推荐！点击侧边栏的“重置”即可从头刷起！');
       }
     } else if (e.deltaY < -30) {
       // Scroll Up -> Previous video
       if (currentIndex > 0) {
-        scrollLockRef.current = true;
+        lockScrollTransition();
         setCurrentIndex(prev => prev - 1);
-        setTimeout(() => {
-          scrollLockRef.current = false;
-        }, 800);
       }
     }
   };
@@ -660,7 +702,12 @@ export default function App() {
                   </button>
                 </div>
               ) : videos.length > 0 && activeVideo ? (
-                <div className="tiktok-feed" onWheel={handleWheel}>
+                <div
+                  className="tiktok-feed"
+                  onWheel={handleWheel}
+                  onTouchStart={handleTouchStart}
+                  onTouchEnd={handleTouchEnd}
+                >
                   
                   {/* Custom HTML5 Video Player */}
                   <div className="tiktok-video-wrapper" onClick={togglePlayState}>
