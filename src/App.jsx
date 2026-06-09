@@ -54,6 +54,7 @@ export default function App() {
   const [devStats, setDevStats] = useState({ users: 0, videos: 0, likes: 0, views: 0, averageResponseTimeMs: 0, totalRequestsLogged: 0 });
   const [devLogs, setDevLogs] = useState([]);
   const [logDetailModal, setLogDetailModal] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
 
   // UI Toast message
   const [toast, setToast] = useState(null);
@@ -103,19 +104,19 @@ export default function App() {
       setIsPlaying(false);
       videoRef.current.load();
       videoRef.current.muted = isMuted;
-      
+
       // Auto-play the new video once loaded
       const playPromise = videoRef.current.play();
       if (playPromise !== undefined) {
         playPromise
-          .then(() => {
-            setIsPlaying(true);
-            // Record view log on backend once the video has successfully played
-            recordVideoView(videos[currentIndex].id);
-          })
-          .catch(err => {
-            console.log("Auto-play blocked by browser. Click to play manually.", err);
-          });
+            .then(() => {
+              setIsPlaying(true);
+              // Record view log on backend once the video has successfully played
+              recordVideoView(videos[currentIndex].id);
+            })
+            .catch(err => {
+              console.log("Auto-play blocked by browser. Click to play manually.", err);
+            });
       }
     }
   }, [currentIndex, videos]);
@@ -152,8 +153,8 @@ export default function App() {
   const normalizeFeedVideo = (video) => {
     if (!video) return video;
     const liked = typeof video.liked === 'boolean'
-      ? video.liked
-      : (video.is_liked === 1 || video.is_liked === true);
+        ? video.liked
+        : (video.is_liked === 1 || video.is_liked === true);
     const likeCount = video.likeCount ?? video.likes_count ?? video.likesCount ?? 0;
     return {
       ...video,
@@ -438,19 +439,23 @@ export default function App() {
   };
 
   // Handle deleting a custom video
-  const handleDeleteVideo = async (videoId, e) => {
-    e.stopPropagation(); // Avoid triggering video cover clicks
-    if (!window.confirm("确定要删除这个视频吗？")) return;
+  const handleDeleteVideo = (videoId, e) => {
+    e.stopPropagation();
+    setDeleteConfirm({ videoId, page: myVideosPagination.page });
+  };
 
+  const confirmDeleteVideo = async () => {
+    if (!deleteConfirm) return;
+    const { videoId, page } = deleteConfirm;
+    setDeleteConfirm(null);
     const data = await apiFetch(`${API_PREFIX}/videos/${videoId}`, { method: 'DELETE' });
     if (data && data.success) {
       showToast('视频已成功下架！');
-      // Refresh my videos grid
-      fetchMyVideos(myVideosPagination.page);
-      
-      // Refresh feed & developer counts
+      fetchMyVideos(page);
       fetchRecommendations();
       fetchDevDashboardData();
+    } else if (data) {
+      showToast(data.message || '删除失败', true);
     }
   };
 
@@ -465,7 +470,7 @@ export default function App() {
   // --- ACTIONS INTERFACE ---
   const togglePlayState = () => {
     if (!videoRef.current) return;
-    
+
     if (isPlaying) {
       videoRef.current.pause();
       setIsPlaying(false);
@@ -473,7 +478,7 @@ export default function App() {
       videoRef.current.play();
       setIsPlaying(true);
     }
-    
+
     // Trigger double-click size effect
     setPlayTriggerAnim(true);
     setTimeout(() => setPlayTriggerAnim(false), 500);
@@ -569,76 +574,76 @@ export default function App() {
   // Auth Screen (Login/Register)
   if (isCheckingSession && token) {
     return (
-      <div className="auth-wrapper">
-        <div className="phone-loading-screen" style={{ position: 'relative', zIndex: 1 }}>
-          <div className="loading-spinner" />
-          <p>正在恢复登录态...</p>
+        <div className="auth-wrapper">
+          <div className="phone-loading-screen" style={{ position: 'relative', zIndex: 1 }}>
+            <div className="loading-spinner" />
+            <p>正在恢复登录态...</p>
+          </div>
         </div>
-      </div>
     );
   }
 
   if (!token) {
     return (
-      <div className="auth-wrapper">
-        <div className="auth-card">
-          <div className="auth-logo">
-            <div className="logo-icon">
-              {/* Custom SVG Douyin Logo */}
-              <svg viewBox="0 0 24 24">
-                <path d="M12.53.07C13.74 0 14.8.08 15.65.17c0 1.25.33 2.37.98 3.32.74 1.09 1.83 1.83 3.07 2.18.52.15 1.05.24 1.8.29v3.42c-.93 0-1.78-.18-2.61-.55-.78-.35-1.5-.86-2.07-1.52v7.7c0 1.63-.44 3.09-1.32 4.25-1.12 1.48-2.82 2.35-4.8 2.35-1.53 0-2.92-.51-3.95-1.52C5.7 19.16 5.11 17.57 5.11 15.68c0-1.84.58-3.41 1.64-4.52C7.8 10.12 9.21 9.6 10.74 9.6c.58 0 1.13.08 1.79.25v3.6c-.53-.18-1.07-.27-1.63-.27-.82 0-1.55.28-2.09.8-.57.54-.88 1.3-.88 2.27 0 .97.31 1.72.88 2.26.54.52 1.27.8 2.09.8.84 0 1.58-.28 2.12-.8.57-.54.89-1.29.89-2.26V.07z" />
-              </svg>
+        <div className="auth-wrapper">
+          <div className="auth-card">
+            <div className="auth-logo">
+              <div className="logo-icon">
+                {/* Custom SVG Douyin Logo */}
+                <svg viewBox="0 0 24 24">
+                  <path d="M12.53.07C13.74 0 14.8.08 15.65.17c0 1.25.33 2.37.98 3.32.74 1.09 1.83 1.83 3.07 2.18.52.15 1.05.24 1.8.29v3.42c-.93 0-1.78-.18-2.61-.55-.78-.35-1.5-.86-2.07-1.52v7.7c0 1.63-.44 3.09-1.32 4.25-1.12 1.48-2.82 2.35-4.8 2.35-1.53 0-2.92-.51-3.95-1.52C5.7 19.16 5.11 17.57 5.11 15.68c0-1.84.58-3.41 1.64-4.52C7.8 10.12 9.21 9.6 10.74 9.6c.58 0 1.13.08 1.79.25v3.6c-.53-.18-1.07-.27-1.63-.27-.82 0-1.55.28-2.09.8-.57.54-.88 1.3-.88 2.27 0 .97.31 1.72.88 2.26.54.52 1.27.8 2.09.8.84 0 1.58-.28 2.12-.8.57-.54.89-1.29.89-2.26V.07z" />
+                </svg>
+              </div>
+              <h2>抖音短视频架构平台</h2>
+              <p>{authMode === 'login' ? '智能算法推荐与实时开发监控' : '创建开发者账户'}</p>
             </div>
-            <h2>抖音短视频架构平台</h2>
-            <p>{authMode === 'login' ? '智能算法推荐与实时开发监控' : '创建开发者账户'}</p>
+
+            <form className="auth-form" onSubmit={handleAuth}>
+              <div className="input-group">
+                <label>用户名</label>
+                <input
+                    type="text"
+                    placeholder="输入用户名"
+                    value={username}
+                    onChange={e => setUsername(e.target.value)}
+                    required
+                />
+              </div>
+              <div className="input-group">
+                <label>密码</label>
+                <input
+                    type="password"
+                    placeholder="输入密码"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    required
+                />
+              </div>
+
+              <button type="submit" className="auth-btn">
+                {authMode === 'login' ? '开启平台' : '立即注册'}
+              </button>
+            </form>
+
+            <div className="auth-switch">
+              {authMode === 'login' ? (
+                  <>
+                    没有账户？ <span onClick={() => setAuthMode('register')}>立即注册</span>
+                  </>
+              ) : (
+                  <>
+                    已有账户？ <span onClick={() => setAuthMode('login')}>直接登录</span>
+                  </>
+              )}
+            </div>
           </div>
 
-          <form className="auth-form" onSubmit={handleAuth}>
-            <div className="input-group">
-              <label>用户名</label>
-              <input
-                type="text"
-                placeholder="输入用户名"
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                required
-              />
-            </div>
-            <div className="input-group">
-              <label>密码</label>
-              <input
-                type="password"
-                placeholder="输入密码"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                required
-              />
-            </div>
-
-            <button type="submit" className="auth-btn">
-              {authMode === 'login' ? '开启平台' : '立即注册'}
-            </button>
-          </form>
-
-          <div className="auth-switch">
-            {authMode === 'login' ? (
-              <>
-                没有账户？ <span onClick={() => setAuthMode('register')}>立即注册</span>
-              </>
-            ) : (
-              <>
-                已有账户？ <span onClick={() => setAuthMode('login')}>直接登录</span>
-              </>
-            )}
-          </div>
+          {toast && (
+              <div className={`toast ${toast.isError ? 'error' : ''}`}>
+                <span>{toast.message}</span>
+              </div>
+          )}
         </div>
-
-        {toast && (
-          <div className={`toast ${toast.isError ? 'error' : ''}`}>
-            <span>{toast.message}</span>
-          </div>
-        )}
-      </div>
     );
   }
 
@@ -646,631 +651,650 @@ export default function App() {
   const activeVideo = videos[currentIndex];
 
   return (
-    <div className="dashboard-container">
-      {/* --- DASHBOARD HEADER --- */}
-      <header className="dashboard-header">
-        <div className="logo-area">
-          <div className="mini-logo">
-            <svg viewBox="0 0 24 24">
-              <path d="M12.53.07C13.74 0 14.8.08 15.65.17c0 1.25.33 2.37.98 3.32.74 1.09 1.83 1.83 3.07 2.18.52.15 1.05.24 1.8.29v3.42c-.93 0-1.78-.18-2.61-.55-.78-.35-1.5-.86-2.07-1.52v7.7c0 1.63-.44 3.09-1.32 4.25-1.12 1.48-2.82 2.35-4.8 2.35-1.53 0-2.92-.51-3.95-1.52C5.7 19.16 5.11 17.57 5.11 15.68c0-1.84.58-3.41 1.64-4.52C7.8 10.12 9.21 9.6 10.74 9.6c.58 0 1.13.08 1.79.25v3.6c-.53-.18-1.07-.27-1.63-.27-.82 0-1.55.28-2.09.8-.57.54-.88 1.3-.88 2.27 0 .97.31 1.72.88 2.26.54.52 1.27.8 2.09.8.84 0 1.58-.28 2.12-.8.57-.54.89-1.29.89-2.26V.07z" />
-            </svg>
-          </div>
-          <h1>抖音短视频</h1>
-          <span>前后端分离 Spring Boot + React 开发平台</span>
-        </div>
-
-        <div className="user-profile-widget">
-          <div className="user-info">
-            <div className="username">UID: {user?.id} • {user?.username}</div>
-            <div className="role">系统开发者 / 体验员</div>
-          </div>
-          <button className="logout-btn danger" onClick={handleDeleteAccount}>
-            注销账户
-          </button>
-          <button className="logout-btn" onClick={() => { setToken(''); setUser(null); }}>
-            <svg style={{ width: 14, height: 14, fill: 'currentColor' }} viewBox="0 0 24 24">
-              <path d="M16 13v-2H7V9l-5 4 5 4v-2h9zM20 3h-9c-1.1 0-2 .9-2 2v4h2V5h9v14h-9v-4H9v4c0 1.1.9 2 2 2h9c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" />
-            </svg>
-            安全退出
-          </button>
-        </div>
-      </header>
-
-      {/* --- DASHBOARD CONTENT Split --- */}
-      <main className="dashboard-main">
-        
-        {/* --- 1. SMARTPHONE FEED VIEW (LEFT) --- */}
-        <section className="app-view-panel">
-          
-          {/* Feed Scrolling Arrow (Prev) */}
-          <div className="phone-scroll-arrows arrow-prev">
-            <button
-              className="arrow-nav-btn"
-              onClick={handlePrevVideo}
-              disabled={currentIndex === 0 || allViewed}
-              title="上滑视频"
-            >
-              <svg style={{ width: 20, height: 20, fill: 'currentColor' }} viewBox="0 0 24 24">
-                <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" />
+      <div className="dashboard-container">
+        {/* --- DASHBOARD HEADER --- */}
+        <header className="dashboard-header">
+          <div className="logo-area">
+            <div className="mini-logo">
+              <svg viewBox="0 0 24 24">
+                <path d="M12.53.07C13.74 0 14.8.08 15.65.17c0 1.25.33 2.37.98 3.32.74 1.09 1.83 1.83 3.07 2.18.52.15 1.05.24 1.8.29v3.42c-.93 0-1.78-.18-2.61-.55-.78-.35-1.5-.86-2.07-1.52v7.7c0 1.63-.44 3.09-1.32 4.25-1.12 1.48-2.82 2.35-4.8 2.35-1.53 0-2.92-.51-3.95-1.52C5.7 19.16 5.11 17.57 5.11 15.68c0-1.84.58-3.41 1.64-4.52C7.8 10.12 9.21 9.6 10.74 9.6c.58 0 1.13.08 1.79.25v3.6c-.53-.18-1.07-.27-1.63-.27-.82 0-1.55.28-2.09.8-.57.54-.88 1.3-.88 2.27 0 .97.31 1.72.88 2.26.54.52 1.27.8 2.09.8.84 0 1.58-.28 2.12-.8.57-.54.89-1.29.89-2.26V.07z" />
               </svg>
+            </div>
+            <h1>抖音短视频</h1>
+            <span>前后端分离 Spring Boot + React 开发平台</span>
+          </div>
+
+          <div className="user-profile-widget">
+            <div className="user-info">
+              <div className="username">UID: {user?.id} • {user?.username}</div>
+              <div className="role">系统开发者 / 体验员</div>
+            </div>
+            <button className="logout-btn danger" onClick={handleDeleteAccount}>
+              注销账户
+            </button>
+            <button className="logout-btn" onClick={() => { setToken(''); setUser(null); }}>
+              <svg style={{ width: 14, height: 14, fill: 'currentColor' }} viewBox="0 0 24 24">
+                <path d="M16 13v-2H7V9l-5 4 5 4v-2h9zM20 3h-9c-1.1 0-2 .9-2 2v4h2V5h9v14h-9v-4H9v4c0 1.1.9 2 2 2h9c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" />
+              </svg>
+              安全退出
             </button>
           </div>
+        </header>
 
-          {/* Actual Smartphone Wrapper */}
-          <div className="phone-mockup">
-            <div className="phone-screen">
-              
-              {/* Watch indicator */}
-              <div className="phone-home-indicator" />
+        {/* --- DASHBOARD CONTENT Split --- */}
+        <main className="dashboard-main">
 
-              {/* Feed Logic */}
-              {isLoadingFeed ? (
-                <div className="phone-loading-screen">
-                  <div className="loading-spinner" />
-                  <p>算法组装中...</p>
-                </div>
-              ) : allViewed ? (
-                <div className="feed-empty-screen">
-                  <div className="empty-icon-glow">
-                    <svg viewBox="0 0 24 24">
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
-                    </svg>
-                  </div>
-                  <h3>推荐已看完</h3>
-                  <p>
-                    推荐算法通过您的“已看日志”识别了用户喜好，所有库里的视频已经过滤完毕。
-                  </p>
-                  <button className="reset-views-btn" onClick={handleResetViews}>
-                    🔄 重置浏览历史以重新排序
-                  </button>
-                </div>
-              ) : videos.length > 0 && activeVideo ? (
-                <div
-                  className="tiktok-feed"
-                  onWheel={handleWheel}
-                  onTouchStart={handleTouchStart}
-                  onTouchEnd={handleTouchEnd}
-                >
-                  
-                  {/* Custom HTML5 Video Player */}
-                  <div className="tiktok-video-wrapper" onClick={togglePlayState}>
-                    <video
-                      ref={videoRef}
-                      className="tiktok-video"
-                      loop
-                      muted={isMuted}
-                      preload="metadata"
-                      playsInline
-                      src={getMediaUrl(activeVideo.video_url)}
-                      poster={activeVideo.cover_url ? getMediaUrl(activeVideo.cover_url) : undefined}
-                    />
+          {/* --- 1. SMARTPHONE FEED VIEW (LEFT) --- */}
+          <section className="app-view-panel">
 
-                    {/* Double Click / Play Indicator Overlay */}
-                    <div className="video-play-overlay">
-                      {playTriggerAnim && (
-                        <div className="play-pause-icon-anim">
-                          {isPlaying ? (
-                            <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-                          ) : (
-                            <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>
+            {/* Feed Scrolling Arrow (Prev) */}
+            <div className="phone-scroll-arrows arrow-prev">
+              <button
+                  className="arrow-nav-btn"
+                  onClick={handlePrevVideo}
+                  disabled={currentIndex === 0 || allViewed}
+                  title="上滑视频"
+              >
+                <svg style={{ width: 20, height: 20, fill: 'currentColor' }} viewBox="0 0 24 24">
+                  <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Actual Smartphone Wrapper */}
+            <div className="phone-mockup">
+              <div className="phone-screen">
+
+                {/* Watch indicator */}
+                <div className="phone-home-indicator" />
+
+                {/* Feed Logic */}
+                {isLoadingFeed ? (
+                    <div className="phone-loading-screen">
+                      <div className="loading-spinner" />
+                      <p>算法组装中...</p>
+                    </div>
+                ) : allViewed ? (
+                    <div className="feed-empty-screen">
+                      <div className="empty-icon-glow">
+                        <svg viewBox="0 0 24 24">
+                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
+                        </svg>
+                      </div>
+                      <h3>推荐已看完</h3>
+                      <p>
+                        推荐算法通过您的“已看日志”识别了用户喜好，所有库里的视频已经过滤完毕。
+                      </p>
+                      <button className="reset-views-btn" onClick={handleResetViews}>
+                        🔄 重置浏览历史以重新排序
+                      </button>
+                    </div>
+                ) : videos.length > 0 && activeVideo ? (
+                    <div
+                        className="tiktok-feed"
+                        onWheel={handleWheel}
+                        onTouchStart={handleTouchStart}
+                        onTouchEnd={handleTouchEnd}
+                    >
+
+                      {/* Custom HTML5 Video Player */}
+                      <div className="tiktok-video-wrapper" onClick={togglePlayState}>
+                        <video
+                            ref={videoRef}
+                            className="tiktok-video"
+                            loop
+                            muted={isMuted}
+                            preload="metadata"
+                            playsInline
+                            src={getMediaUrl(activeVideo.video_url)}
+                            poster={activeVideo.cover_url ? getMediaUrl(activeVideo.cover_url) : undefined}
+                        />
+
+                        {/* Double Click / Play Indicator Overlay */}
+                        <div className="video-play-overlay">
+                          {playTriggerAnim && (
+                              <div className="play-pause-icon-anim">
+                                {isPlaying ? (
+                                    <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                                ) : (
+                                    <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>
+                                )}
+                              </div>
                           )}
                         </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <button className="video-mute-button" onClick={toggleMuted} title={isMuted ? '打开声音' : '静音'}>
-                    {isMuted ? (
-                      <svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.62 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73L16.25 17.52c-.67.52-1.43.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
-                    ) : (
-                      <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
-                    )}
-                  </button>
-
-                  {/* Video Meta Info Bottom Overlay */}
-                  <div className="video-meta-overlay">
-                    <div className="creator-handle">
-                      @{activeVideo.creator_name || '未知创作者'}
-                      {activeVideo.user_id === user?.id && <span>我的发布</span>}
-                    </div>
-                    <div className="video-caption">
-                      {activeVideo.title} {activeVideo.description && `— ${activeVideo.description}`}
-                    </div>
-                    <div className="video-hashtags">#智能算法推荐 #SpringBoot #React</div>
-                  </div>
-
-                  {/* Right Action floating icons */}
-                  <div className="video-action-sidebar">
-                    <div className="sidebar-avatar-wrapper">
-                      <div className="sidebar-avatar">
-                        <img
-                          src={`https://api.dicebear.com/7.x/bottts/svg?seed=${activeVideo.creator_name}`}
-                          alt="avatar"
-                        />
                       </div>
-                      <div className="sidebar-follow-badge" title="关注作者">
-                        <svg viewBox="0 0 24 24">
-                          <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-                        </svg>
+
+                      <button className="video-mute-button" onClick={toggleMuted} title={isMuted ? '打开声音' : '静音'}>
+                        {isMuted ? (
+                            <svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.62 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73L16.25 17.52c-.67.52-1.43.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
+                        ) : (
+                            <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                        )}
+                      </button>
+
+                      {/* Video Meta Info Bottom Overlay */}
+                      <div className="video-meta-overlay">
+                        <div className="creator-handle">
+                          @{activeVideo.creator_name || '未知创作者'}
+                          {activeVideo.user_id === user?.id && <span>我的发布</span>}
+                        </div>
+                        <div className="video-caption">
+                          {activeVideo.title} {activeVideo.description && `— ${activeVideo.description}`}
+                        </div>
+                        <div className="video-hashtags">#智能算法推荐 #SpringBoot #React</div>
                       </div>
-                    </div>
 
-                    {/* Like button */}
-                    <button
-                      className={`action-item-button ${activeVideo.liked ? 'liked' : ''} ${likingVideoId === activeVideo.id ? 'is-loading' : ''}`}
-                      onClick={(e) => handleToggleLike(activeVideo.id, e)}
-                      disabled={likingVideoId === activeVideo.id}
-                      aria-pressed={activeVideo.liked}
-                      aria-label={activeVideo.liked ? '取消点赞' : '点赞'}
-                      title={activeVideo.liked ? '取消点赞' : '点赞'}
-                    >
-                      <div className="action-icon-circle">
-                        <svg viewBox="0 0 24 24">
-                          <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                        </svg>
-                      </div>
-                      <span className="action-count">{activeVideo.likeCount ?? 0}</span>
-                    </button>
-
-                    {/* Quick Reset Views log */}
-                    <button className="action-item-button special-action" onClick={handleResetViews} title="重置观看日志">
-                      <div className="action-icon-circle">
-                        <svg viewBox="0 0 24 24">
-                          <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
-                        </svg>
-                      </div>
-                      <span className="action-count" style={{ color: 'var(--primary-cyan)' }}>重置已看</span>
-                    </button>
-
-                    {/* Publish video trigger */}
-                    <button className="action-item-button special-action" onClick={() => setIsUploadOpen(true)} title="发布我的新视频">
-                      <div className="action-icon-circle publish-icon">
-                        <svg viewBox="0 0 24 24">
-                          <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-                        </svg>
-                      </div>
-                      <span className="action-count publish-label">发视频</span>
-                    </button>
-
-                    {/* My videos listing trigger */}
-                    <button className="action-item-button special-action" onClick={openMyVideosPanel} title="管理我的视频">
-                      <div className="action-icon-circle">
-                        <svg viewBox="0 0 24 24">
-                          <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z" />
-                        </svg>
-                      </div>
-                      <span className="action-count">我的作品</span>
-                    </button>
-                  </div>
-
-                </div>
-              ) : (
-                <div className="feed-empty-screen">
-                  <h3>视频库空空如也</h3>
-                  <p>服务器数据库中没有任何可推荐视频。</p>
-                  <button className="reset-views-btn" onClick={() => setIsUploadOpen(true)}>
-                    ➕ 发布全站首款视频
-                  </button>
-                </div>
-              )}
-
-              {/* Grid of My Videos sliding overlay in smartphone */}
-              {isMyVideosOpen && (
-                <div className="phone-overlay-panel">
-                  <div className="panel-header">
-                    <h3>我的作品 ({myVideos.length})</h3>
-                    <button className="panel-close-btn" onClick={() => setIsMyVideosOpen(false)}>
-                      <svg style={{ width: 20, height: 20, fill: 'currentColor' }} viewBox="0 0 24 24">
-                        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
-                      </svg>
-                    </button>
-                  </div>
-
-                  <div className="my-videos-grid">
-                    {myVideos.length > 0 ? (
-                      myVideos.map((mv, idx) => (
-                        <div key={mv.id} className="grid-video-card" onClick={() => handlePlayMyVideo(idx)}>
-                          <img
-                            className="grid-video-cover"
-                            src={getMediaUrl(mv.cover_url)}
-                            alt={mv.title}
-                          />
-                          <button
-                            className="grid-card-delete-btn"
-                            onClick={(e) => handleDeleteVideo(mv.id, e)}
-                            title="删除此视频"
-                          >
+                      {/* Right Action floating icons */}
+                      <div className="video-action-sidebar">
+                        <div className="sidebar-avatar-wrapper">
+                          <div className="sidebar-avatar">
+                            <img
+                                src={`https://api.dicebear.com/7.x/bottts/svg?seed=${activeVideo.creator_name}`}
+                                alt="avatar"
+                            />
+                          </div>
+                          <div className="sidebar-follow-badge" title="关注作者">
                             <svg viewBox="0 0 24 24">
-                              <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                              <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                             </svg>
-                          </button>
-                          <div className="grid-video-info">
+                          </div>
+                        </div>
+
+                        {/* Like button */}
+                        <button
+                            className={`action-item-button ${activeVideo.liked ? 'liked' : ''} ${likingVideoId === activeVideo.id ? 'is-loading' : ''}`}
+                            onClick={(e) => handleToggleLike(activeVideo.id, e)}
+                            disabled={likingVideoId === activeVideo.id}
+                            aria-pressed={activeVideo.liked}
+                            aria-label={activeVideo.liked ? '取消点赞' : '点赞'}
+                            title={activeVideo.liked ? '取消点赞' : '点赞'}
+                        >
+                          <div className="action-icon-circle">
                             <svg viewBox="0 0 24 24">
                               <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
                             </svg>
-                            <span>{mv.likeCount ?? mv.likesCount ?? mv.likes_count ?? 0}</span>
                           </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="my-videos-empty">
-                        <svg viewBox="0 0 24 24">
-                          <path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-9 9l-6 4.5-6 4.5z" />
-                        </svg>
-                        <p>您还没有发布任何作品喔</p>
+                          <span className="action-count">{activeVideo.likeCount ?? 0}</span>
+                        </button>
+
+                        {/* Quick Reset Views log */}
+                        <button className="action-item-button special-action" onClick={handleResetViews} title="重置观看日志">
+                          <div className="action-icon-circle">
+                            <svg viewBox="0 0 24 24">
+                              <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+                            </svg>
+                          </div>
+                          <span className="action-count" style={{ color: 'var(--primary-cyan)' }}>重置已看</span>
+                        </button>
+
+                        {/* Publish video trigger */}
+                        <button className="action-item-button special-action" onClick={() => setIsUploadOpen(true)} title="发布我的新视频">
+                          <div className="action-icon-circle publish-icon">
+                            <svg viewBox="0 0 24 24">
+                              <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                            </svg>
+                          </div>
+                          <span className="action-count publish-label">发视频</span>
+                        </button>
+
+                        {/* My videos listing trigger */}
+                        <button className="action-item-button special-action" onClick={openMyVideosPanel} title="管理我的视频">
+                          <div className="action-icon-circle">
+                            <svg viewBox="0 0 24 24">
+                              <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z" />
+                            </svg>
+                          </div>
+                          <span className="action-count">我的作品</span>
+                        </button>
                       </div>
-                    )}
-                  </div>
 
-                  <div className="my-videos-pagination">
-                    <button
-                      disabled={myVideosPagination.page === 1}
-                      onClick={() => fetchMyVideos(myVideosPagination.page - 1)}
-                    >
-                      上一页
-                    </button>
-                    <span>第 {myVideosPagination.page} / {myVideosPagination.totalPages || 1} 页</span>
-                    <button
-                      disabled={myVideosPagination.page >= myVideosPagination.totalPages}
-                      onClick={() => fetchMyVideos(myVideosPagination.page + 1)}
-                    >
-                      下一页
-                    </button>
-                  </div>
-                </div>
-              )}
+                    </div>
+                ) : (
+                    <div className="feed-empty-screen">
+                      <h3>视频库空空如也</h3>
+                      <p>服务器数据库中没有任何可推荐视频。</p>
+                      <button className="reset-views-btn" onClick={() => setIsUploadOpen(true)}>
+                        ➕ 发布全站首款视频
+                      </button>
+                    </div>
+                )}
 
-            </div>
-          </div>
+                {/* Grid of My Videos sliding overlay in smartphone */}
+                {isMyVideosOpen && (
+                    <div className="phone-overlay-panel">
+                      <div className="panel-header">
+                        <h3>我的作品 ({myVideos.length})</h3>
+                        <button className="panel-close-btn" onClick={() => setIsMyVideosOpen(false)}>
+                          <svg style={{ width: 20, height: 20, fill: 'currentColor' }} viewBox="0 0 24 24">
+                            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                          </svg>
+                        </button>
+                      </div>
 
-          {/* Feed Scrolling Arrow (Next) */}
-          <div className="phone-scroll-arrows arrow-next">
-            <button
-              className="arrow-nav-btn"
-              onClick={handleNextVideo}
-              disabled={currentIndex === videos.length - 1 || allViewed}
-              title="下滑视频"
-            >
-              <svg style={{ width: 20, height: 20, fill: 'currentColor' }} viewBox="0 0 24 24">
-                <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" />
-              </svg>
-            </button>
-          </div>
+                      <div className="my-videos-grid">
+                        {myVideos.length > 0 ? (
+                            myVideos.map((mv, idx) => (
+                                <div key={mv.id} className="grid-video-card" onClick={() => handlePlayMyVideo(idx)}>
+                                  <img
+                                      className="grid-video-cover"
+                                      src={getMediaUrl(mv.cover_url)}
+                                      alt={mv.title}
+                                  />
+                                  <button
+                                      className="grid-card-delete-btn"
+                                      onClick={(e) => handleDeleteVideo(mv.id, e)}
+                                      title="删除此视频"
+                                  >
+                                    <svg viewBox="0 0 24 24">
+                                      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                                    </svg>
+                                  </button>
+                                  <div className="grid-video-info">
+                                    <svg viewBox="0 0 24 24">
+                                      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                                    </svg>
+                                    <span>{mv.likeCount ?? mv.likesCount ?? mv.likes_count ?? 0}</span>
+                                  </div>
+                                </div>
+                            ))
+                        ) : (
+                            <div className="my-videos-empty">
+                              <svg viewBox="0 0 24 24">
+                                <path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-9 9l-6 4.5-6 4.5z" />
+                              </svg>
+                              <p>您还没有发布任何作品喔</p>
+                            </div>
+                        )}
+                      </div>
 
-        </section>
+                      <div className="my-videos-pagination">
+                        <button
+                            disabled={myVideosPagination.page === 1}
+                            onClick={() => fetchMyVideos(myVideosPagination.page - 1)}
+                        >
+                          上一页
+                        </button>
+                        <span>第 {myVideosPagination.page} / {myVideosPagination.totalPages || 1} 页</span>
+                        <button
+                            disabled={myVideosPagination.page >= myVideosPagination.totalPages}
+                            onClick={() => fetchMyVideos(myVideosPagination.page + 1)}
+                        >
+                          下一页
+                        </button>
+                      </div>
+                    </div>
+                )}
 
-        {/* --- 2. DEVELOPER MONITORING DASHBOARD PANEL (RIGHT) --- */}
-        <section className="dev-console-panel">
-          
-          <div className="console-title-bar">
-            <h2>
-              <svg viewBox="0 0 24 24">
-                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-4 6h-4v2h4v2h-4v2h4v2H9V7h6v2z" />
-              </svg>
-              抖音 API 开发者监控面板
-            </h2>
-            <div className="live-badge">
-              <span className="blink-dot" />
-              Live Connected
-            </div>
-          </div>
-
-          {/* Stats Widgets Grid */}
-          <div className="stats-grid">
-            <div className="stats-card">
-              <div className="stats-card-header">
-                <span>系统总用户</span>
-                <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
-              </div>
-              <div className="stats-card-value">{devStats.users}</div>
-            </div>
-
-            <div className="stats-card">
-              <div className="stats-card-header">
-                <span>推荐视频池</span>
-                <svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
-              </div>
-              <div className="stats-card-value">{devStats.videos}</div>
-            </div>
-
-            <div className="stats-card">
-              <div className="stats-card-header">
-                <span>全站总互动(点赞)</span>
-                <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
-              </div>
-              <div className="stats-card-value">{devStats.likes}</div>
-            </div>
-
-            <div className="stats-card highlight">
-              <div className="stats-card-header">
-                <span>平均 API 延迟</span>
-                <svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 2 22 6.48 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
-              </div>
-              <div className="stats-card-value" style={{ color: 'var(--primary-cyan)' }}>
-                {devStats.averageResponseTimeMs} <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>ms</span>
               </div>
             </div>
-          </div>
 
-          {/* Terminal Console for scrolling logs */}
-          <div className="terminal-card">
-            <div className="terminal-header">
-              <div className="terminal-buttons">
-                <div className="terminal-dot" />
-                <div className="terminal-dot" />
-                <div className="terminal-dot" />
-              </div>
-              <div className="terminal-title">spring-boot-server-requests.log</div>
-              <button className="terminal-clear-btn" onClick={() => setDevLogs([])}>
-                Clear
+            {/* Feed Scrolling Arrow (Next) */}
+            <div className="phone-scroll-arrows arrow-next">
+              <button
+                  className="arrow-nav-btn"
+                  onClick={handleNextVideo}
+                  disabled={currentIndex === videos.length - 1 || allViewed}
+                  title="下滑视频"
+              >
+                <svg style={{ width: 20, height: 20, fill: 'currentColor' }} viewBox="0 0 24 24">
+                  <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" />
+                </svg>
               </button>
             </div>
-            
-            <div className="terminal-console">
-              {devLogs.length > 0 ? (
-                devLogs.map((log, i) => (
-                  <div key={i} className="log-row">
-                    <span className="log-timestamp">[{log.timestamp}]</span>
-                    <span className={`log-method ${log.method}`}>{log.method}</span>
-                    <span className="log-url">{log.url}</span>
-                    <span className={`log-status ${log.statusCode >= 200 && log.statusCode < 300 ? 'status-2xx' : log.statusCode >= 400 && log.statusCode < 500 ? 'status-4xx' : 'status-5xx'}`}>
+
+          </section>
+
+          {/* --- 2. DEVELOPER MONITORING DASHBOARD PANEL (RIGHT) --- */}
+          <section className="dev-console-panel">
+
+            <div className="console-title-bar">
+              <h2>
+                <svg viewBox="0 0 24 24">
+                  <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-4 6h-4v2h4v2h-4v2h4v2H9V7h6v2z" />
+                </svg>
+                抖音 API 开发者监控面板
+              </h2>
+              <div className="live-badge">
+                <span className="blink-dot" />
+                Live Connected
+              </div>
+            </div>
+
+            {/* Stats Widgets Grid */}
+            <div className="stats-grid">
+              <div className="stats-card">
+                <div className="stats-card-header">
+                  <span>系统总用户</span>
+                  <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                </div>
+                <div className="stats-card-value">{devStats.users}</div>
+              </div>
+
+              <div className="stats-card">
+                <div className="stats-card-header">
+                  <span>推荐视频池</span>
+                  <svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+                </div>
+                <div className="stats-card-value">{devStats.videos}</div>
+              </div>
+
+              <div className="stats-card">
+                <div className="stats-card-header">
+                  <span>全站总互动(点赞)</span>
+                  <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                </div>
+                <div className="stats-card-value">{devStats.likes}</div>
+              </div>
+
+              <div className="stats-card highlight">
+                <div className="stats-card-header">
+                  <span>平均 API 延迟</span>
+                  <svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 2 22 6.48 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+                </div>
+                <div className="stats-card-value" style={{ color: 'var(--primary-cyan)' }}>
+                  {devStats.averageResponseTimeMs} <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>ms</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Terminal Console for scrolling logs */}
+            <div className="terminal-card">
+              <div className="terminal-header">
+                <div className="terminal-buttons">
+                  <div className="terminal-dot" />
+                  <div className="terminal-dot" />
+                  <div className="terminal-dot" />
+                </div>
+                <div className="terminal-title">spring-boot-server-requests.log</div>
+                <button className="terminal-clear-btn" onClick={() => setDevLogs([])}>
+                  Clear
+                </button>
+              </div>
+
+              <div className="terminal-console">
+                {devLogs.length > 0 ? (
+                    devLogs.map((log, i) => (
+                        <div key={i} className="log-row">
+                          <span className="log-timestamp">[{log.timestamp}]</span>
+                          <span className={`log-method ${log.method}`}>{log.method}</span>
+                          <span className="log-url">{log.url}</span>
+                          <span className={`log-status ${log.statusCode >= 200 && log.statusCode < 300 ? 'status-2xx' : log.statusCode >= 400 && log.statusCode < 500 ? 'status-4xx' : 'status-5xx'}`}>
                       {log.statusCode}
                     </span>
-                    <span className="log-duration" style={{ color: log.durationMs > 500 ? '#ff4d4d' : 'inherit' }}>
+                          <span className="log-duration" style={{ color: log.durationMs > 500 ? '#ff4d4d' : 'inherit' }}>
                       {log.durationMs}ms
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => setLogDetailModal(log)}
-                      style={{
-                        background: 'transparent',
-                        border: 0,
-                        color: 'var(--primary-cyan)',
-                        cursor: 'pointer',
-                        fontSize: 12,
-                        marginLeft: 8,
-                        padding: 0
-                      }}
-                    >
-                      详情
-                    </button>
-                  </div>
-                ))
-              ) : (
-                <div className="terminal-empty-text">
-                  ⌨️ 等待 API 网络请求中... 触发左侧手机交互即可看见实时 Spring Boot 拦截日志！
-                </div>
-              )}
+                          <button
+                              type="button"
+                              onClick={() => setLogDetailModal(log)}
+                              style={{
+                                background: 'transparent',
+                                border: 0,
+                                color: 'var(--primary-cyan)',
+                                cursor: 'pointer',
+                                fontSize: 12,
+                                marginLeft: 8,
+                                padding: 0
+                              }}
+                          >
+                            详情
+                          </button>
+                        </div>
+                    ))
+                ) : (
+                    <div className="terminal-empty-text">
+                      ⌨️ 等待 API 网络请求中... 触发左侧手机交互即可看见实时 Spring Boot 拦截日志！
+                    </div>
+                )}
+              </div>
             </div>
-          </div>
 
-          {/* Developer Quick Controllers */}
-          <div className="dev-controls-card">
-            <h3>🎛️ 算法与数据库交互中心</h3>
-            <div className="controls-flex">
-              <button className="dev-action-btn" onClick={fetchRecommendations}>
-                🔍 强制同步算法推荐源
-              </button>
-              <button className="dev-action-btn" onClick={handleResetViews}>
-                🔄 一键清空我的“已看日志”
-              </button>
-              <button className="dev-action-btn danger" onClick={handleDeleteAccount}>
-                ⚠️ 注销测试账户 (重置关联)
-              </button>
+            {/* Developer Quick Controllers */}
+            <div className="dev-controls-card">
+              <h3>🎛️ 算法与数据库交互中心</h3>
+              <div className="controls-flex">
+                <button className="dev-action-btn" onClick={fetchRecommendations}>
+                  🔍 强制同步算法推荐源
+                </button>
+                <button className="dev-action-btn" onClick={handleResetViews}>
+                  🔄 一键清空我的“已看日志”
+                </button>
+                <button className="dev-action-btn danger" onClick={handleDeleteAccount}>
+                  ⚠️ 注销测试账户 (重置关联)
+                </button>
+              </div>
             </div>
-          </div>
 
-        </section>
+          </section>
 
-      </main>
+        </main>
 
-      {/* --- --- --- --- --- --- --- --- --- --- --- --- */}
-      {/* --- MODAL SYSTEM (PUBLISH VIDEO) --- */}
-      {/* --- --- --- --- --- --- --- --- --- --- --- --- */}
-      {isUploadOpen && (
-        <div className="modal-overlay" onClick={() => !isUploading && setIsUploadOpen(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <button className="modal-close-btn" onClick={() => !isUploading && setIsUploadOpen(false)}>
-              <svg viewBox="0 0 24 24">
-                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
-              </svg>
-            </button>
+        {/* --- --- --- --- --- --- --- --- --- --- --- --- */}
+        {/* --- MODAL SYSTEM (PUBLISH VIDEO) --- */}
+        {/* --- --- --- --- --- --- --- --- --- --- --- --- */}
+        {isUploadOpen && (
+            <div className="modal-overlay" onClick={() => !isUploading && setIsUploadOpen(false)}>
+              <div className="modal-content" onClick={e => e.stopPropagation()}>
+                <button className="modal-close-btn" onClick={() => !isUploading && setIsUploadOpen(false)}>
+                  <svg viewBox="0 0 24 24">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                  </svg>
+                </button>
 
-            <h3>发布新短视频</h3>
+                <h3>发布新短视频</h3>
 
-            {isUploading ? (
-              <div style={{ textAlign: 'center', padding: '30px 0' }}>
-                <div className="loading-spinner" style={{ margin: '0 auto 15px' }} />
-                <p style={{ fontSize: 14, color: 'var(--text-main)', fontWeight: 500 }}>
-                  视频上传切片并写入 H2 数据库中...
-                </p>
-                <div className="progress-bar-container">
-                  <div className="progress-bar-fill" style={{ width: `${uploadProgress}%` }} />
-                </div>
-                <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginTop: 8 }}>
+                {isUploading ? (
+                    <div style={{ textAlign: 'center', padding: '30px 0' }}>
+                      <div className="loading-spinner" style={{ margin: '0 auto 15px' }} />
+                      <p style={{ fontSize: 14, color: 'var(--text-main)', fontWeight: 500 }}>
+                        视频上传切片并写入 H2 数据库中...
+                      </p>
+                      <div className="progress-bar-container">
+                        <div className="progress-bar-fill" style={{ width: `${uploadProgress}%` }} />
+                      </div>
+                      <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginTop: 8 }}>
                   进度: {uploadProgress}%
                 </span>
+                    </div>
+                ) : (
+                    <form onSubmit={handlePublish}>
+                      <div className="upload-form-group">
+                        <label>视频标题 *</label>
+                        <input
+                            type="text"
+                            placeholder="输入精彩的视频标题..."
+                            value={uploadTitle}
+                            onChange={e => setUploadTitle(e.target.value)}
+                            required
+                        />
+                      </div>
+
+                      <div className="upload-form-group">
+                        <label>视频描述 (选填)</label>
+                        <textarea
+                            placeholder="为视频添加补充说明, 支持带上 #话题 喔..."
+                            value={uploadDesc}
+                            onChange={e => setUploadDesc(e.target.value)}
+                        />
+                      </div>
+
+                      <div className="upload-form-group">
+                        <label>选择视频文件 *</label>
+                        <div
+                            className="file-upload-zone"
+                            onClick={() => document.getElementById('video-input-file').click()}
+                        >
+                          <svg viewBox="0 0 24 24">
+                            <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z" />
+                          </svg>
+                          <p>点击选择 MP4 / WEBM / MOV 格式短视频</p>
+                          <span>大小限制 100MB</span>
+                          <input
+                              id="video-input-file"
+                              type="file"
+                              accept="video/*"
+                              style={{ display: 'none' }}
+                              onChange={e => setUploadVideo(e.target.files[0])}
+                              required
+                          />
+                        </div>
+                        {uploadVideo && (
+                            <div className="file-name-indicator">
+                              🎥 选定视频: {uploadVideo.name} ({(uploadVideo.size / 1024 / 1024).toFixed(2)} MB)
+                            </div>
+                        )}
+                      </div>
+
+                      <div className="upload-form-group">
+                        <label>上传封面图片 (选填)</label>
+                        <div
+                            className="file-upload-zone"
+                            onClick={() => document.getElementById('cover-input-file').click()}
+                        >
+                          <svg viewBox="0 0 24 24">
+                            <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
+                          </svg>
+                          <p>点击选择封面配图 (JPG / PNG / WEBP)</p>
+                          <span>若不传封面，系统将自动生成彩色抽象渐变图占位</span>
+                          <input
+                              id="cover-input-file"
+                              type="file"
+                              accept="image/*"
+                              style={{ display: 'none' }}
+                              onChange={e => setUploadCover(e.target.files[0])}
+                          />
+                        </div>
+                        {uploadCover && (
+                            <div className="file-name-indicator cover-file">
+                              🖼️ 选定封面: {uploadCover.name}
+                            </div>
+                        )}
+                      </div>
+
+                      <div className="modal-action-row">
+                        <button type="button" className="btn-secondary" onClick={() => setIsUploadOpen(false)}>
+                          取消
+                        </button>
+                        <button type="submit" className="btn-primary">
+                          立即发布短视频
+                        </button>
+                      </div>
+                    </form>
+                )}
               </div>
-            ) : (
-              <form onSubmit={handlePublish}>
-                <div className="upload-form-group">
-                  <label>视频标题 *</label>
-                  <input
-                    type="text"
-                    placeholder="输入精彩的视频标题..."
-                    value={uploadTitle}
-                    onChange={e => setUploadTitle(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="upload-form-group">
-                  <label>视频描述 (选填)</label>
-                  <textarea
-                    placeholder="为视频添加补充说明, 支持带上 #话题 喔..."
-                    value={uploadDesc}
-                    onChange={e => setUploadDesc(e.target.value)}
-                  />
-                </div>
-
-                <div className="upload-form-group">
-                  <label>选择视频文件 *</label>
-                  <div
-                    className="file-upload-zone"
-                    onClick={() => document.getElementById('video-input-file').click()}
-                  >
-                    <svg viewBox="0 0 24 24">
-                      <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z" />
-                    </svg>
-                    <p>点击选择 MP4 / WEBM / MOV 格式短视频</p>
-                    <span>大小限制 100MB</span>
-                    <input
-                      id="video-input-file"
-                      type="file"
-                      accept="video/*"
-                      style={{ display: 'none' }}
-                      onChange={e => setUploadVideo(e.target.files[0])}
-                      required
-                    />
-                  </div>
-                  {uploadVideo && (
-                    <div className="file-name-indicator">
-                      🎥 选定视频: {uploadVideo.name} ({(uploadVideo.size / 1024 / 1024).toFixed(2)} MB)
-                    </div>
-                  )}
-                </div>
-
-                <div className="upload-form-group">
-                  <label>上传封面图片 (选填)</label>
-                  <div
-                    className="file-upload-zone"
-                    onClick={() => document.getElementById('cover-input-file').click()}
-                  >
-                    <svg viewBox="0 0 24 24">
-                      <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
-                    </svg>
-                    <p>点击选择封面配图 (JPG / PNG / WEBP)</p>
-                    <span>若不传封面，系统将自动生成彩色抽象渐变图占位</span>
-                    <input
-                      id="cover-input-file"
-                      type="file"
-                      accept="image/*"
-                      style={{ display: 'none' }}
-                      onChange={e => setUploadCover(e.target.files[0])}
-                    />
-                  </div>
-                  {uploadCover && (
-                    <div className="file-name-indicator cover-file">
-                      🖼️ 选定封面: {uploadCover.name}
-                    </div>
-                  )}
-                </div>
-
-                <div className="modal-action-row">
-                  <button type="button" className="btn-secondary" onClick={() => setIsUploadOpen(false)}>
-                    取消
-                  </button>
-                  <button type="submit" className="btn-primary">
-                    立即发布短视频
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-        </div>
-      )}
-
-      {logDetailModal && (
-        <div className="modal-overlay" onClick={() => setLogDetailModal(null)}>
-          <div
-            className="modal-content"
-            onClick={e => e.stopPropagation()}
-            style={{ maxWidth: 600, maxHeight: '80vh', overflowY: 'auto' }}
-          >
-            <button className="modal-close-btn" onClick={() => setLogDetailModal(null)}>
-              <svg viewBox="0 0 24 24">
-                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
-              </svg>
-            </button>
-
-            <h3 style={{ marginBottom: 16 }}>请求详情</h3>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
-              {[
-                ['时间', logDetailModal.timestamp],
-                ['方法', logDetailModal.method],
-                ['路径', logDetailModal.url],
-                ['状态码', logDetailModal.statusCode],
-                ['耗时', `${logDetailModal.durationMs}ms`],
-              ].map(([label, value]) => (
-                <div key={label} style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 6, padding: '8px 12px' }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>{label}</div>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      color: label === '耗时' && logDetailModal.durationMs > 500 ? '#ff4d4d' : 'var(--text-main)',
-                      wordBreak: 'break-all'
-                    }}
-                  >
-                    {value}
-                  </div>
-                </div>
-              ))}
             </div>
+        )}
 
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Request Body</div>
-              <pre
-                style={{
-                  background: 'rgba(0,0,0,0.3)',
-                  borderRadius: 6,
-                  padding: 12,
-                  fontSize: 12,
-                  color: '#a8ff78',
-                  overflowX: 'auto',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-all',
-                  maxHeight: 150,
-                  overflowY: 'auto',
-                  margin: 0
-                }}
+        {deleteConfirm && (
+            <div className="modal-overlay" onClick={() => setDeleteConfirm(null)}>
+              <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 380, textAlign: 'center' }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>🗑️</div>
+                <h3 style={{ marginBottom: 8 }}>确认删除视频？</h3>
+                <p style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 24 }}>
+                  此操作不可恢复，视频文件和相关记录将被永久删除。
+                </p>
+                <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+                  <button className="btn-secondary" onClick={() => setDeleteConfirm(null)}>取消</button>
+                  <button className="btn-primary" style={{ background: '#e53935' }} onClick={confirmDeleteVideo}>确认删除</button>
+                </div>
+              </div>
+            </div>
+        )}
+
+        {logDetailModal && (
+            <div className="modal-overlay" onClick={() => setLogDetailModal(null)}>
+              <div
+                  className="modal-content"
+                  onClick={e => e.stopPropagation()}
+                  style={{ maxWidth: 600, maxHeight: '80vh', overflowY: 'auto' }}
               >
+                <button className="modal-close-btn" onClick={() => setLogDetailModal(null)}>
+                  <svg viewBox="0 0 24 24">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                  </svg>
+                </button>
+
+                <h3 style={{ marginBottom: 16 }}>请求详情</h3>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
+                  {[
+                    ['时间', logDetailModal.timestamp],
+                    ['方法', logDetailModal.method],
+                    ['路径', logDetailModal.url],
+                    ['状态码', logDetailModal.statusCode],
+                    ['耗时', `${logDetailModal.durationMs}ms`],
+                    ['用户 ID', logDetailModal.userId ?? '未登录'],
+                    ['客户端 IP', logDetailModal.userIp],
+                    ['traceId', logDetailModal.traceId],
+                  ].map(([label, value]) => (
+                      <div key={label} style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 6, padding: '8px 12px' }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>{label}</div>
+                        <div
+                            style={{
+                              fontSize: 13,
+                              color: label === '耗时' && logDetailModal.durationMs > 500 ? '#ff4d4d' : 'var(--text-main)',
+                              wordBreak: 'break-all'
+                            }}
+                        >
+                          {value}
+                        </div>
+                      </div>
+                  ))}
+                </div>
+
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Request Body</div>
+                  <pre
+                      style={{
+                        background: 'rgba(0,0,0,0.3)',
+                        borderRadius: 6,
+                        padding: 12,
+                        fontSize: 12,
+                        color: '#a8ff78',
+                        overflowX: 'auto',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                        maxHeight: 150,
+                        overflowY: 'auto',
+                        margin: 0
+                      }}
+                  >
                 {formatBody(logDetailModal.requestBody)}
               </pre>
-            </div>
+                </div>
 
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Response Body</div>
-              <pre
-                style={{
-                  background: 'rgba(0,0,0,0.3)',
-                  borderRadius: 6,
-                  padding: 12,
-                  fontSize: 12,
-                  color: '#78c8ff',
-                  overflowX: 'auto',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-all',
-                  maxHeight: 150,
-                  overflowY: 'auto',
-                  margin: 0
-                }}
-              >
+                <div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Response Body</div>
+                  <pre
+                      style={{
+                        background: 'rgba(0,0,0,0.3)',
+                        borderRadius: 6,
+                        padding: 12,
+                        fontSize: 12,
+                        color: '#78c8ff',
+                        overflowX: 'auto',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                        maxHeight: 150,
+                        overflowY: 'auto',
+                        margin: 0
+                      }}
+                  >
                 {formatBody(logDetailModal.responseBody)}
               </pre>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+        )}
 
-      {/* --- --- --- --- --- --- --- --- --- --- --- --- */}
-      {/* --- SYSTEM TOAST NOTIFICATIONS --- */}
-      {/* --- --- --- --- --- --- --- --- --- --- --- --- */}
-      {toast && (
-        <div className={`toast ${toast.isError ? 'error' : ''}`}>
-          <span>{toast.message}</span>
-        </div>
-      )}
-    </div>
+        {/* --- --- --- --- --- --- --- --- --- --- --- --- */}
+        {/* --- SYSTEM TOAST NOTIFICATIONS --- */}
+        {/* --- --- --- --- --- --- --- --- --- --- --- --- */}
+        {toast && (
+            <div className={`toast ${toast.isError ? 'error' : ''}`}>
+              <span>{toast.message}</span>
+            </div>
+        )}
+      </div>
   );
 }
