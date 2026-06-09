@@ -13,6 +13,8 @@ const loadStoredUser = () => {
   }
 };
 
+const REQUEST_TIMEOUT_MS = 8000;
+
 export default function App() {
   // --- STATE SYSTEM ---
   // Auth state
@@ -88,7 +90,7 @@ export default function App() {
     if (token) {
       intervalId = setInterval(() => {
         fetchDevDashboardData();
-      }, 2000);
+      }, 10000);
     }
     return () => {
       if (intervalId) clearInterval(intervalId);
@@ -180,20 +182,24 @@ export default function App() {
 
   // Centralized Authenticated Fetch Wrapper
   const apiFetch = async (endpoint, options = {}) => {
-    const headers = { ...options.headers };
+    const { silent = false, timeoutMs = REQUEST_TIMEOUT_MS, ...fetchOptions } = options;
+    const headers = { ...fetchOptions.headers };
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
     // Set JSON content-type only if it's not a multipart file upload Form
-    if (!(options.body instanceof FormData) && !headers['Content-Type']) {
+    if (!(fetchOptions.body instanceof FormData) && !headers['Content-Type']) {
       headers['Content-Type'] = 'application/json';
     }
 
     try {
       const response = await fetch(`${API_BASE}${endpoint}`, {
-        ...options,
-        headers
+        ...fetchOptions,
+        headers,
+        signal: controller.signal
       });
 
       if (response.status === 401) {
@@ -208,20 +214,29 @@ export default function App() {
       const text = await response.text();
       return text ? JSON.parse(text) : {};
     } catch (err) {
-      showToast('网络请求失败，请确保后端服务已启动！', true);
-      console.error(err);
+      if (!silent) {
+        showToast(err.name === 'AbortError' ? `请求超时：${endpoint}` : '网络请求失败，请确保后端服务已启动！', true);
+        console.error(endpoint, err);
+      }
       return null;
+    } finally {
+      clearTimeout(timeoutId);
     }
   };
 
   const initializeAuthenticatedSession = async () => {
     setIsCheckingSession(true);
-    const currentUser = await fetchCurrentUser();
-    if (currentUser) {
-      await fetchRecommendations();
-      await fetchDevDashboardData();
+    try {
+      const currentUser = await fetchCurrentUser();
+      if (currentUser) {
+        Promise.allSettled([
+          fetchRecommendations(),
+          fetchDevDashboardData()
+        ]);
+      }
+    } finally {
+      setIsCheckingSession(false);
     }
-    setIsCheckingSession(false);
   };
 
   const fetchCurrentUser = async () => {
@@ -335,12 +350,12 @@ export default function App() {
 
   // Fetch developer console metrics and logs
   const fetchDevDashboardData = async () => {
-    const statsData = await apiFetch(`${API_PREFIX}/admin/stats`);
+    const statsData = await apiFetch(`${API_PREFIX}/admin/stats`, { silent: true, timeoutMs: 15000 });
     if (statsData && statsData.success) {
       setDevStats(statsData.stats);
     }
 
-    const logsData = await apiFetch(`${API_PREFIX}/admin/request-logs`);
+    const logsData = await apiFetch(`${API_PREFIX}/admin/request-logs`, { silent: true, timeoutMs: 15000 });
     if (logsData && logsData.success) {
       setDevLogs(logsData.logs || []);
     }
