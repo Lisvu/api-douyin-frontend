@@ -1553,6 +1553,126 @@ body {
   cursor: not-allowed;
 }
 
+.like-notification-trigger .action-icon-circle {
+  position: relative;
+}
+
+.notification-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--primary-pink);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 0 0 2px #000;
+}
+
+.like-notifications-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 16px;
+}
+
+.like-notification-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.03);
+  position: relative;
+}
+
+.like-notification-item.is-unread {
+  border-color: rgba(254, 44, 85, 0.45);
+  background: rgba(254, 44, 85, 0.08);
+}
+
+.like-notification-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+
+.like-notification-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.like-notification-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.like-notification-title {
+  font-size: 12px;
+  color: #fff;
+  margin-bottom: 4px;
+}
+
+.like-notification-title strong {
+  color: var(--primary-cyan);
+}
+
+.like-notification-video {
+  font-size: 11px;
+  color: rgba(255,255,255,0.82);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.like-notification-time {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.like-notification-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary-pink);
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+
+.like-notifications-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.like-notifications-empty svg {
+  width: 42px;
+  height: 42px;
+  fill: rgba(255,255,255,0.25);
+}
+
+.like-notifications-empty p {
+  font-size: 12px;
+}
+
 /* Loading Overlay inside Phone mockup */
 .phone-loading-screen {
   position: absolute;

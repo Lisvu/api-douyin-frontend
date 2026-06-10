@@ -41,6 +41,10 @@ export default function App() {
   const [isMyVideosOpen, setIsMyVideosOpen] = useState(false);
   const [myVideos, setMyVideos] = useState([]);
   const [myVideosPagination, setMyVideosPagination] = useState({ page: 1, totalPages: 1 });
+  const [isLikeNotificationsOpen, setIsLikeNotificationsOpen] = useState(false);
+  const [likeNotifications, setLikeNotifications] = useState([]);
+  const [likeNotificationUnreadCount, setLikeNotificationUnreadCount] = useState(0);
+  const [likeNotificationsPagination, setLikeNotificationsPagination] = useState({ page: 1, totalPages: 1 });
 
   // Video upload form state
   const [uploadTitle, setUploadTitle] = useState('');
@@ -92,6 +96,23 @@ export default function App() {
       intervalId = setInterval(() => {
         fetchDevDashboardData();
       }, 10000);
+    }
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [token]);
+
+  // Poll like notification unread count when logged in (F14)
+  useEffect(() => {
+    let intervalId;
+    if (token) {
+      fetchLikeNotificationUnreadCount();
+      intervalId = setInterval(() => {
+        fetchLikeNotificationUnreadCount();
+      }, 15000);
+    } else {
+      setLikeNotificationUnreadCount(0);
+      setLikeNotifications([]);
     }
     return () => {
       if (intervalId) clearInterval(intervalId);
@@ -232,7 +253,8 @@ export default function App() {
       if (currentUser) {
         Promise.allSettled([
           fetchRecommendations(),
-          fetchDevDashboardData()
+          fetchDevDashboardData(),
+          fetchLikeNotificationUnreadCount()
         ]);
       }
     } finally {
@@ -372,6 +394,51 @@ export default function App() {
         totalPages: data.pagination.totalPages
       });
     }
+  };
+
+  const fetchLikeNotificationUnreadCount = async () => {
+    const data = await apiFetch(`${API_PREFIX}/users/me/like-notifications?page=1&limit=1`);
+    if (data && data.success) {
+      setLikeNotificationUnreadCount(data.unreadCount ?? 0);
+    }
+  };
+
+  const fetchLikeNotifications = async (page = 1) => {
+    const data = await apiFetch(`${API_PREFIX}/users/me/like-notifications?page=${page}&limit=10`);
+    if (data && data.success) {
+      setLikeNotifications(data.notifications || []);
+      setLikeNotificationUnreadCount(data.unreadCount ?? 0);
+      setLikeNotificationsPagination({
+        page: data.pagination?.page ?? page,
+        totalPages: data.pagination?.totalPages ?? 1
+      });
+    }
+  };
+
+  const markLikeNotificationsRead = async () => {
+    const data = await apiFetch(`${API_PREFIX}/users/me/like-notifications/read`, { method: 'PUT' });
+    if (data && data.success) {
+      setLikeNotificationUnreadCount(0);
+      setLikeNotifications(prev => prev.map(item => ({ ...item, read: true })));
+    }
+  };
+
+  const openLikeNotificationsPanel = async () => {
+    setIsLikeNotificationsOpen(true);
+    await fetchLikeNotifications(1);
+    await markLikeNotificationsRead();
+  };
+
+  const formatNotificationTime = (value) => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   };
 
   // Handle publishing video
@@ -837,6 +904,25 @@ export default function App() {
                           <span className="action-count publish-label">发视频</span>
                         </button>
 
+                        {/* Like notifications trigger (F14) */}
+                        <button
+                            className="action-item-button special-action like-notification-trigger"
+                            onClick={openLikeNotificationsPanel}
+                            title="谁赞了我的视频"
+                        >
+                          <div className="action-icon-circle">
+                            <svg viewBox="0 0 24 24">
+                              <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z" />
+                            </svg>
+                            {likeNotificationUnreadCount > 0 && (
+                                <span className="notification-badge">
+                                  {likeNotificationUnreadCount > 99 ? '99+' : likeNotificationUnreadCount}
+                                </span>
+                            )}
+                          </div>
+                          <span className="action-count">点赞通知</span>
+                        </button>
+
                         {/* My videos listing trigger */}
                         <button className="action-item-button special-action" onClick={openMyVideosPanel} title="管理我的视频">
                           <div className="action-icon-circle">
@@ -856,6 +942,69 @@ export default function App() {
                       <button className="reset-views-btn" onClick={() => setIsUploadOpen(true)}>
                         ➕ 发布全站首款视频
                       </button>
+                    </div>
+                )}
+
+                {/* Like notifications sliding overlay (F14) */}
+                {isLikeNotificationsOpen && (
+                    <div className="phone-overlay-panel">
+                      <div className="panel-header">
+                        <h3>谁赞了我的视频</h3>
+                        <button className="panel-close-btn" onClick={() => setIsLikeNotificationsOpen(false)}>
+                          <svg style={{ width: 20, height: 20, fill: 'currentColor' }} viewBox="0 0 24 24">
+                            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                          </svg>
+                        </button>
+                      </div>
+
+                      <div className="like-notifications-list">
+                        {likeNotifications.length > 0 ? (
+                            likeNotifications.map(item => (
+                                <div
+                                    key={item.likeId}
+                                    className={`like-notification-item ${item.read ? 'is-read' : 'is-unread'}`}
+                                >
+                                  <div className="like-notification-avatar">
+                                    <img
+                                        src={`https://api.dicebear.com/7.x/bottts/svg?seed=${item.likerUsername}`}
+                                        alt={item.likerUsername}
+                                    />
+                                  </div>
+                                  <div className="like-notification-content">
+                                    <div className="like-notification-title">
+                                      <strong>@{item.likerUsername}</strong> 赞了你的视频
+                                    </div>
+                                    <div className="like-notification-video">{item.videoTitle}</div>
+                                    <div className="like-notification-time">{formatNotificationTime(item.likedAt)}</div>
+                                  </div>
+                                  {!item.read && <span className="like-notification-dot" aria-hidden="true" />}
+                                </div>
+                            ))
+                        ) : (
+                            <div className="like-notifications-empty">
+                              <svg viewBox="0 0 24 24">
+                                <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                              </svg>
+                              <p>还没有人赞过你的作品</p>
+                            </div>
+                        )}
+                      </div>
+
+                      <div className="my-videos-pagination">
+                        <button
+                            disabled={likeNotificationsPagination.page === 1}
+                            onClick={() => fetchLikeNotifications(likeNotificationsPagination.page - 1)}
+                        >
+                          上一页
+                        </button>
+                        <span>第 {likeNotificationsPagination.page} / {likeNotificationsPagination.totalPages || 1} 页</span>
+                        <button
+                            disabled={likeNotificationsPagination.page >= likeNotificationsPagination.totalPages}
+                            onClick={() => fetchLikeNotifications(likeNotificationsPagination.page + 1)}
+                        >
+                          下一页
+                        </button>
+                      </div>
                     </div>
                 )}
 
