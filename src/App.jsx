@@ -92,7 +92,7 @@ export default function App() {
   // Background polling loop to populate Developer Monitor Console (runs every 2 seconds)
   useEffect(() => {
     let intervalId;
-    if (token) {
+    if (token && user?.role === 'ADMIN') {
       intervalId = setInterval(() => {
         fetchDevDashboardData();
       }, 10000);
@@ -100,7 +100,7 @@ export default function App() {
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, [token]);
+  }, [token, user?.role]);
 
   // Poll like notification unread count when logged in (F14)
   useEffect(() => {
@@ -253,7 +253,7 @@ export default function App() {
       if (currentUser) {
         Promise.allSettled([
           fetchRecommendations(),
-          fetchDevDashboardData(),
+          ...(currentUser.role === 'ADMIN' ? [fetchDevDashboardData()] : []),
           fetchLikeNotificationUnreadCount()
         ]);
       }
@@ -498,7 +498,9 @@ export default function App() {
 
         // Refresh feed & developer counts
         fetchRecommendations();
-        fetchDevDashboardData();
+        if (user?.role === 'ADMIN') {
+          fetchDevDashboardData();
+        }
       } else if (data) {
         showToast(data.message, true);
       }
@@ -520,7 +522,9 @@ export default function App() {
       showToast('视频已成功下架！');
       fetchMyVideos(page);
       fetchRecommendations();
-      fetchDevDashboardData();
+      if (user?.role === 'ADMIN') {
+        fetchDevDashboardData();
+      }
     } else if (data) {
       showToast(data.message || '删除失败', true);
     }
@@ -734,7 +738,9 @@ export default function App() {
           <div className="user-profile-widget">
             <div className="user-info">
               <div className="username">UID: {user?.id} • {user?.username}</div>
-              <div className="role">系统开发者 / 体验员</div>
+              <div className="role">
+                {user?.role === 'ADMIN' ? '🔧 系统管理员' : '👤 普通用户'}
+              </div>
             </div>
             <button className="logout-btn danger" onClick={handleDeleteAccount}>
               注销账户
@@ -1094,127 +1100,129 @@ export default function App() {
           </section>
 
           {/* --- 2. DEVELOPER MONITORING DASHBOARD PANEL (RIGHT) --- */}
-          <section className="dev-console-panel">
+          {user?.role === 'ADMIN' && (
+              <section className="dev-console-panel">
 
-            <div className="console-title-bar">
-              <h2>
-                <svg viewBox="0 0 24 24">
-                  <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-4 6h-4v2h4v2h-4v2h4v2H9V7h6v2z" />
-                </svg>
-                抖音 API 开发者监控面板
-              </h2>
-              <div className="live-badge">
-                <span className="blink-dot" />
-                Live Connected
-              </div>
-            </div>
-
-            {/* Stats Widgets Grid */}
-            <div className="stats-grid">
-              <div className="stats-card">
-                <div className="stats-card-header">
-                  <span>系统总用户</span>
-                  <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                <div className="console-title-bar">
+                  <h2>
+                    <svg viewBox="0 0 24 24">
+                      <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-4 6h-4v2h4v2h-4v2h4v2H9V7h6v2z" />
+                    </svg>
+                    抖音 API 开发者监控面板
+                  </h2>
+                  <div className="live-badge">
+                    <span className="blink-dot" />
+                    Live Connected
+                  </div>
                 </div>
-                <div className="stats-card-value">{devStats.users}</div>
-              </div>
 
-              <div className="stats-card">
-                <div className="stats-card-header">
-                  <span>推荐视频池</span>
-                  <svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
-                </div>
-                <div className="stats-card-value">{devStats.videos}</div>
-              </div>
-
-              <div className="stats-card">
-                <div className="stats-card-header">
-                  <span>全站总互动(点赞)</span>
-                  <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
-                </div>
-                <div className="stats-card-value">{devStats.likes}</div>
-              </div>
-
-              <div className="stats-card highlight">
-                <div className="stats-card-header">
-                  <span>平均 API 延迟</span>
-                  <svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 2 22 6.48 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
-                </div>
-                <div className="stats-card-value" style={{ color: 'var(--primary-cyan)' }}>
-                  {devStats.averageResponseTimeMs} <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>ms</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Terminal Console for scrolling logs */}
-            <div className="terminal-card">
-              <div className="terminal-header">
-                <div className="terminal-buttons">
-                  <div className="terminal-dot" />
-                  <div className="terminal-dot" />
-                  <div className="terminal-dot" />
-                </div>
-                <div className="terminal-title">spring-boot-server-requests.log</div>
-                <button className="terminal-clear-btn" onClick={() => setDevLogs([])}>
-                  Clear
-                </button>
-              </div>
-
-              <div className="terminal-console">
-                {devLogs.length > 0 ? (
-                    devLogs.map((log, i) => (
-                        <div key={i} className="log-row">
-                          <span className="log-timestamp">[{log.timestamp}]</span>
-                          <span className={`log-method ${log.method}`}>{log.method}</span>
-                          <span className="log-url">{log.url}</span>
-                          <span className={`log-status ${log.statusCode >= 200 && log.statusCode < 300 ? 'status-2xx' : log.statusCode >= 400 && log.statusCode < 500 ? 'status-4xx' : 'status-5xx'}`}>
-                      {log.statusCode}
-                    </span>
-                          <span className="log-duration" style={{ color: log.durationMs > 500 ? '#ff4d4d' : 'inherit' }}>
-                      {log.durationMs}ms
-                    </span>
-                          <button
-                              type="button"
-                              onClick={() => setLogDetailModal(log)}
-                              style={{
-                                background: 'transparent',
-                                border: 0,
-                                color: 'var(--primary-cyan)',
-                                cursor: 'pointer',
-                                fontSize: 12,
-                                marginLeft: 8,
-                                padding: 0
-                              }}
-                          >
-                            详情
-                          </button>
-                        </div>
-                    ))
-                ) : (
-                    <div className="terminal-empty-text">
-                      ⌨️ 等待 API 网络请求中... 触发左侧手机交互即可看见实时 Spring Boot 拦截日志！
+                {/* Stats Widgets Grid */}
+                <div className="stats-grid">
+                  <div className="stats-card">
+                    <div className="stats-card-header">
+                      <span>系统总用户</span>
+                      <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
                     </div>
-                )}
-              </div>
-            </div>
+                    <div className="stats-card-value">{devStats.users}</div>
+                  </div>
 
-            {/* Developer Quick Controllers */}
-            <div className="dev-controls-card">
-              <h3>🎛️ 算法与数据库交互中心</h3>
-              <div className="controls-flex">
-                <button className="dev-action-btn" onClick={fetchRecommendations}>
-                  🔍 强制同步算法推荐源
-                </button>
-                <button className="dev-action-btn" onClick={handleResetViews}>
-                  🔄 一键清空我的“已看日志”
-                </button>
-                <button className="dev-action-btn danger" onClick={handleDeleteAccount}>
-                  ⚠️ 注销测试账户 (重置关联)
-                </button>
-              </div>
-            </div>
+                  <div className="stats-card">
+                    <div className="stats-card-header">
+                      <span>推荐视频池</span>
+                      <svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+                    </div>
+                    <div className="stats-card-value">{devStats.videos}</div>
+                  </div>
 
-          </section>
+                  <div className="stats-card">
+                    <div className="stats-card-header">
+                      <span>全站总互动(点赞)</span>
+                      <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                    </div>
+                    <div className="stats-card-value">{devStats.likes}</div>
+                  </div>
+
+                  <div className="stats-card highlight">
+                    <div className="stats-card-header">
+                      <span>平均 API 延迟</span>
+                      <svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 2 22 6.48 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+                    </div>
+                    <div className="stats-card-value" style={{ color: 'var(--primary-cyan)' }}>
+                      {devStats.averageResponseTimeMs} <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>ms</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Terminal Console for scrolling logs */}
+                <div className="terminal-card">
+                  <div className="terminal-header">
+                    <div className="terminal-buttons">
+                      <div className="terminal-dot" />
+                      <div className="terminal-dot" />
+                      <div className="terminal-dot" />
+                    </div>
+                    <div className="terminal-title">spring-boot-server-requests.log</div>
+                    <button className="terminal-clear-btn" onClick={() => setDevLogs([])}>
+                      Clear
+                    </button>
+                  </div>
+
+                  <div className="terminal-console">
+                    {devLogs.length > 0 ? (
+                        devLogs.map((log, i) => (
+                            <div key={i} className="log-row">
+                              <span className="log-timestamp">[{log.timestamp}]</span>
+                              <span className={`log-method ${log.method}`}>{log.method}</span>
+                              <span className="log-url">{log.url}</span>
+                              <span className={`log-status ${log.statusCode >= 200 && log.statusCode < 300 ? 'status-2xx' : log.statusCode >= 400 && log.statusCode < 500 ? 'status-4xx' : 'status-5xx'}`}>
+                        {log.statusCode}
+                      </span>
+                              <span className="log-duration" style={{ color: log.durationMs > 500 ? '#ff4d4d' : 'inherit' }}>
+                        {log.durationMs}ms
+                      </span>
+                              <button
+                                  type="button"
+                                  onClick={() => setLogDetailModal(log)}
+                                  style={{
+                                    background: 'transparent',
+                                    border: 0,
+                                    color: 'var(--primary-cyan)',
+                                    cursor: 'pointer',
+                                    fontSize: 12,
+                                    marginLeft: 8,
+                                    padding: 0
+                                  }}
+                              >
+                                详情
+                              </button>
+                            </div>
+                        ))
+                    ) : (
+                        <div className="terminal-empty-text">
+                          ⌨️ 等待 API 网络请求中... 触发左侧手机交互即可看见实时 Spring Boot 拦截日志！
+                        </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Developer Quick Controllers */}
+                <div className="dev-controls-card">
+                  <h3>🎛️ 算法与数据库交互中心</h3>
+                  <div className="controls-flex">
+                    <button className="dev-action-btn" onClick={fetchRecommendations}>
+                      🔍 强制同步算法推荐源
+                    </button>
+                    <button className="dev-action-btn" onClick={handleResetViews}>
+                      🔄 一键清空我的“已看日志”
+                    </button>
+                    <button className="dev-action-btn danger" onClick={handleDeleteAccount}>
+                      ⚠️ 注销测试账户 (重置关联)
+                    </button>
+                  </div>
+                </div>
+
+              </section>
+          )}
 
         </main>
 
