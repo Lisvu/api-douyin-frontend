@@ -65,6 +65,24 @@ export default function App() {
   const [likeNotificationUnreadCount, setLikeNotificationUnreadCount] = useState(0);
   const [likeNotificationsPagination, setLikeNotificationsPagination] = useState({ nextCursor: null, hasMore: false });
 
+  // Liked videos
+  const [isLikedVideosOpen, setIsLikedVideosOpen] = useState(false);
+  const [likedVideos, setLikedVideos] = useState([]);
+  const [likedVideosPagination, setLikedVideosPagination] = useState({ nextCursor: null, hasMore: false });
+
+  // Share to friend
+  const [isShareOpen, setIsShareOpen] = useState(false);
+  const [shareTargetVideoId, setShareTargetVideoId] = useState(null);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [userSearchResults, setUserSearchResults] = useState([]);
+  const [isSearchingUsers, setIsSearchingUsers] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
+
+  // Shared with me
+  const [isSharedVideosOpen, setIsSharedVideosOpen] = useState(false);
+  const [sharedVideos, setSharedVideos] = useState([]);
+  const [sharedVideosPagination, setSharedVideosPagination] = useState({ nextCursor: null, hasMore: false });
+
   // Video upload form state
   const [uploadTitle, setUploadTitle] = useState('');
   const [uploadDesc, setUploadDesc] = useState('');
@@ -72,6 +90,7 @@ export default function App() {
   const [uploadCover, setUploadCover] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStatusMsg, setUploadStatusMsg] = useState('');
 
   // Live Developer Stats & Logs dashboard
   const [devStats, setDevStats] = useState({ users: 0, videos: 0, likes: 0, views: 0, averageResponseTimeMs: 0, totalRequestsLogged: 0 });
@@ -450,6 +469,67 @@ export default function App() {
     }
   };
 
+  // Fetch liked videos (cursor paginated)
+  const fetchLikedVideos = async (cursor = null, append = false) => {
+    const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+    const data = await apiFetch(`${API_PREFIX}/users/me/liked-videos?limit=8${cursorParam}`);
+    if (data && data.success) {
+      const fetchedVideos = (data.videos || []).map(normalizeFeedVideo);
+      setLikedVideos(prev => append ? [...prev, ...fetchedVideos] : fetchedVideos);
+      setLikedVideosPagination({
+        nextCursor: data.pagination?.nextCursor ?? null,
+        hasMore: data.pagination?.hasMore ?? false
+      });
+    }
+  };
+
+  // Search users for share modal
+  const searchUsers = async (query) => {
+    if (!query.trim()) {
+      setUserSearchResults([]);
+      return;
+    }
+    setIsSearchingUsers(true);
+    const data = await apiFetch(`${API_PREFIX}/users/search?q=${encodeURIComponent(query.trim())}`);
+    setIsSearchingUsers(false);
+    if (data && data.success) {
+      setUserSearchResults(data.users || []);
+    }
+  };
+
+  // Share video to another user
+  const shareVideoToUser = async (toUserId) => {
+    setIsSharing(true);
+    const data = await apiFetch(`${API_PREFIX}/videos/${shareTargetVideoId}/share`, {
+      method: 'POST',
+      body: JSON.stringify({ toUserId }),
+      headers: { 'Content-Type': 'application/json' }
+    });
+    setIsSharing(false);
+    if (data && data.success) {
+      showToast('视频转发成功！');
+      setIsShareOpen(false);
+      setUserSearchQuery('');
+      setUserSearchResults([]);
+    } else if (data) {
+      showToast(data.message || '转发失败', true);
+    }
+  };
+
+  // Fetch videos shared with me
+  const fetchSharedVideos = async (cursor = null, append = false) => {
+    const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+    const data = await apiFetch(`${API_PREFIX}/users/me/shared-videos?limit=8${cursorParam}`);
+    if (data && data.success) {
+      const fetchedVideos = (data.videos || []).map(normalizeFeedVideo);
+      setSharedVideos(prev => append ? [...prev, ...fetchedVideos] : fetchedVideos);
+      setSharedVideosPagination({
+        nextCursor: data.pagination?.nextCursor ?? null,
+        hasMore: data.pagination?.hasMore ?? false
+      });
+    }
+  };
+
   const fetchLikeNotificationUnreadCount = async () => {
     const data = await apiFetch(`${API_PREFIX}/users/me/like-notifications?limit=1`);
     if (data && data.success) {
@@ -496,6 +576,59 @@ export default function App() {
     });
   };
 
+  const extractVideoFirstFrame = (videoFile) => {
+    return new Promise((resolve, reject) => {
+      const video = document.createElement('video');
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const url = URL.createObjectURL(videoFile);
+
+      // Timeout after 15s to avoid hanging forever
+      const timeout = setTimeout(() => {
+        URL.revokeObjectURL(url);
+        reject(new Error('Frame extraction timed out'));
+      }, 15000);
+
+      video.preload = 'metadata';
+      video.muted = true;
+      video.playsInline = true;
+      video.crossOrigin = 'anonymous';
+
+      video.onloadedmetadata = () => {
+        // Seek to 0.1s to skip possible black initial frame
+        if (video.duration > 0.1) {
+          video.currentTime = 0.1;
+        } else {
+          video.currentTime = 0;
+        }
+      };
+
+      video.onseeked = () => {
+        clearTimeout(timeout);
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          URL.revokeObjectURL(url);
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error('Failed to create blob from canvas'));
+          }
+        }, 'image/jpeg', 0.9);
+      };
+
+      video.onerror = () => {
+        clearTimeout(timeout);
+        URL.revokeObjectURL(url);
+        reject(new Error('Failed to load video for frame extraction'));
+      };
+
+      // Start loading — must be after event handlers
+      video.src = url;
+    });
+  };
+
   const handlePublish = async (e) => {
     e.preventDefault();
     if (!uploadTitle.trim()) {
@@ -508,14 +641,29 @@ export default function App() {
     }
 
     setIsUploading(true);
+    setUploadProgress(5);
+
+    // Auto-extract first frame as cover if no cover selected
+    let coverToUpload = uploadCover;
+    if (!coverToUpload && uploadVideo) {
+      setUploadStatusMsg('正在提取视频首帧作为封面...');
+      try {
+        const frameBlob = await extractVideoFirstFrame(uploadVideo);
+        coverToUpload = new File([frameBlob], 'cover-auto.jpg', { type: 'image/jpeg' });
+      } catch (err) {
+        console.warn('Auto cover extraction failed, using fallback:', err);
+      }
+    }
+
+    setUploadStatusMsg('视频上传切片并写入数据库中...');
     setUploadProgress(10);
 
     const formData = new FormData();
     formData.append('title', uploadTitle);
     formData.append('description', uploadDesc);
     formData.append('video', uploadVideo);
-    if (uploadCover) {
-      formData.append('cover', uploadCover);
+    if (coverToUpload) {
+      formData.append('cover', coverToUpload);
     }
 
     const progressInterval = setInterval(() => {
@@ -539,6 +687,7 @@ export default function App() {
     setTimeout(() => {
       setIsUploading(false);
       setUploadProgress(0);
+      setUploadStatusMsg('');
 
       if (data && data.success) {
         showToast('🎉 视频发布成功！已加入算法推荐池！');
@@ -584,6 +733,16 @@ export default function App() {
     setVideos(myVideos);
     setCurrentIndex(index);
     setIsMyVideosOpen(false);
+    setAllViewed(false);
+    setCurrentView('feed');
+  };
+
+  const handlePlayMyVideoItem = (videoItem) => {
+    loadingMoreFeedRef.current = false;
+    setIsLoadingMoreFeed(false);
+    setFeedPagination({ nextCursor: null, hasMore: false });
+    setVideos([videoItem]);
+    setCurrentIndex(0);
     setAllViewed(false);
     setCurrentView('feed');
   };
@@ -758,6 +917,23 @@ export default function App() {
   const openMyVideosPanel = () => {
     setIsMyVideosOpen(true);
     fetchMyVideos();
+  };
+
+  const openLikedVideosPanel = () => {
+    setIsLikedVideosOpen(true);
+    fetchLikedVideos();
+  };
+
+  const openSharePanel = (videoId) => {
+    setShareTargetVideoId(videoId);
+    setIsShareOpen(true);
+    setUserSearchQuery('');
+    setUserSearchResults([]);
+  };
+
+  const openSharedVideosPanel = () => {
+    setIsSharedVideosOpen(true);
+    fetchSharedVideos();
   };
 
   const formatBody = (body) => {
@@ -1055,6 +1231,20 @@ export default function App() {
                         <span className="action-count">{activeVideo.likeCount ?? 0}</span>
                       </button>
 
+                      {/* Share button */}
+                      <button
+                          className="action-item-button special-action"
+                          onClick={(e) => { e.stopPropagation(); openSharePanel(activeVideo.id); }}
+                          title="转发给好友"
+                      >
+                        <div className="action-icon-circle">
+                          <svg viewBox="0 0 24 24">
+                            <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
+                          </svg>
+                        </div>
+                        <span className="action-count">转发</span>
+                      </button>
+
                       {/* Reset views */}
                       <button className="action-item-button special-action" onClick={handleResetViews} title="重置观看日志">
                         <div className="action-icon-circle">
@@ -1102,6 +1292,26 @@ export default function App() {
                           </svg>
                         </div>
                         <span className="action-count">我的作品</span>
+                      </button>
+
+                      {/* Liked videos */}
+                      <button className="action-item-button special-action" onClick={openLikedVideosPanel} title="查看我点赞的视频">
+                        <div className="action-icon-circle">
+                          <svg viewBox="0 0 24 24">
+                            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                          </svg>
+                        </div>
+                        <span className="action-count">我的喜欢</span>
+                      </button>
+
+                      {/* Shared with me */}
+                      <button className="action-item-button special-action" onClick={openSharedVideosPanel} title="好友分享给我的视频">
+                        <div className="action-icon-circle">
+                          <svg viewBox="0 0 24 24">
+                            <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
+                          </svg>
+                        </div>
+                        <span className="action-count">分享给我</span>
                       </button>
                     </div>
 
@@ -1424,7 +1634,7 @@ export default function App() {
                     <div style={{ textAlign: 'center', padding: '30px 0' }}>
                       <div className="loading-spinner" style={{ margin: '0 auto 15px' }} />
                       <p style={{ fontSize: 14, color: 'var(--text-main)', fontWeight: 500 }}>
-                        视频上传切片并写入数据库中...
+                        {uploadStatusMsg || '视频上传切片并写入数据库中...'}
                       </p>
                       <div className="progress-bar-container">
                         <div className="progress-bar-fill" style={{ width: `${uploadProgress}%` }} />
@@ -1492,7 +1702,7 @@ export default function App() {
                             <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
                           </svg>
                           <p>点击选择封面配图 (JPG / PNG / WEBP)</p>
-                          <span>若不传封面，系统将自动生成彩色抽象渐变图占位</span>
+                          <span>若不传封面，系统将自动截取视频第一帧作为封面</span>
                           <input
                               id="cover-input-file"
                               type="file"
@@ -1518,6 +1728,184 @@ export default function App() {
                       </div>
                     </form>
                 )}
+              </div>
+            </div>
+        )}
+
+        {/* Liked Videos Modal */}
+        {isLikedVideosOpen && (
+            <div className="modal-overlay" onClick={() => setIsLikedVideosOpen(false)}>
+              <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 640 }}>
+                <button className="modal-close-btn" onClick={() => setIsLikedVideosOpen(false)}>
+                  <svg viewBox="0 0 24 24">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                  </svg>
+                </button>
+
+                <h3>我的喜欢 ({likedVideos.length})</h3>
+
+                <div className="my-videos-grid web-modal-grid">
+                  {likedVideos.length > 0 ? (
+                      likedVideos.map((lv) => (
+                          <div key={lv.id} className="grid-video-card" onClick={() => { setIsLikedVideosOpen(false); handlePlayMyVideoItem(lv); }}>
+                            <img
+                                className="grid-video-cover"
+                                src={getMediaUrl(lv.cover_url)}
+                                alt={lv.title}
+                            />
+                            <div className="grid-video-info">
+                              <svg viewBox="0 0 24 24">
+                                <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                              </svg>
+                              <span>{lv.likeCount ?? lv.likes_count ?? 0}</span>
+                            </div>
+                          </div>
+                      ))
+                  ) : (
+                      <div className="my-videos-empty">
+                        <svg viewBox="0 0 24 24">
+                          <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                        </svg>
+                        <p>你还没有点赞任何视频哦</p>
+                      </div>
+                  )}
+                </div>
+
+                <div className="my-videos-pagination">
+                  <button onClick={() => fetchLikedVideos()}>刷新</button>
+                  <span>{likedVideosPagination.hasMore ? '还有更多' : '已加载全部'}</span>
+                  <button
+                      disabled={!likedVideosPagination.hasMore}
+                      onClick={() => fetchLikedVideos(likedVideosPagination.nextCursor, true)}
+                  >
+                    加载更多
+                  </button>
+                </div>
+              </div>
+            </div>
+        )}
+
+        {/* Share to Friend Modal */}
+        {isShareOpen && (
+            <div className="modal-overlay" onClick={() => { setIsShareOpen(false); setUserSearchQuery(''); setUserSearchResults([]); }}>
+              <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
+                <button className="modal-close-btn" onClick={() => { setIsShareOpen(false); setUserSearchQuery(''); setUserSearchResults([]); }}>
+                  <svg viewBox="0 0 24 24">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                  </svg>
+                </button>
+
+                <h3>转发视频给好友</h3>
+
+                <div style={{ marginBottom: 16 }}>
+                  <input
+                      className="user-search-input"
+                      type="text"
+                      placeholder="搜索用户 (输入用户名)..."
+                      value={userSearchQuery}
+                      onChange={e => {
+                        setUserSearchQuery(e.target.value);
+                        searchUsers(e.target.value);
+                      }}
+                      autoFocus
+                  />
+                </div>
+
+                <div className="user-search-results" style={{ maxHeight: 300, overflowY: 'auto' }}>
+                  {isSearchingUsers ? (
+                      <div style={{ textAlign: 'center', padding: 20 }}>
+                        <div className="loading-spinner" style={{ margin: '0 auto 10px' }} />
+                        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>搜索中...</span>
+                      </div>
+                  ) : userSearchResults.length > 0 ? (
+                      userSearchResults.map(u => (
+                          <div
+                              key={u.id}
+                              className="user-search-result-item"
+                              onClick={() => shareVideoToUser(u.id)}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 12,
+                                padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
+                                background: 'var(--bg-hover)', marginBottom: 6,
+                                opacity: isSharing ? 0.5 : 1, pointerEvents: isSharing ? 'none' : 'auto'
+                              }}
+                          >
+                            <img
+                                src={`https://api.dicebear.com/7.x/bottts/svg?seed=${u.username}`}
+                                alt={u.username}
+                                style={{ width: 40, height: 40, borderRadius: '50%' }}
+                            />
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 600, fontSize: 14 }}>@{u.username}</div>
+                              {u.displayName && (
+                                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{u.displayName}</div>
+                              )}
+                            </div>
+                            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>ID: {u.id}</span>
+                          </div>
+                      ))
+                  ) : userSearchQuery.trim() ? (
+                      <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)', fontSize: 13 }}>
+                        未找到匹配的用户
+                      </div>
+                  ) : (
+                      <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)', fontSize: 13 }}>
+                        输入用户名搜索好友
+                      </div>
+                  )}
+                </div>
+              </div>
+            </div>
+        )}
+
+        {/* Shared Videos Modal */}
+        {isSharedVideosOpen && (
+            <div className="modal-overlay" onClick={() => setIsSharedVideosOpen(false)}>
+              <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 640 }}>
+                <button className="modal-close-btn" onClick={() => setIsSharedVideosOpen(false)}>
+                  <svg viewBox="0 0 24 24">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                  </svg>
+                </button>
+
+                <h3>好友分享给我的 ({sharedVideos.length})</h3>
+
+                <div className="my-videos-grid web-modal-grid">
+                  {sharedVideos.length > 0 ? (
+                      sharedVideos.map((sv) => (
+                          <div key={`shared-${sv.id}`} className="grid-video-card" onClick={() => { setIsSharedVideosOpen(false); handlePlayMyVideoItem(sv); }}>
+                            <img
+                                className="grid-video-cover"
+                                src={getMediaUrl(sv.cover_url)}
+                                alt={sv.title}
+                            />
+                            <div className="grid-video-info">
+                              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                来自 @{sv.shared_by || 'unknown'}
+                              </span>
+                            </div>
+                          </div>
+                      ))
+                  ) : (
+                      <div className="my-videos-empty">
+                        <svg viewBox="0 0 24 24">
+                          <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
+                        </svg>
+                        <p>暂时没有好友分享视频给你</p>
+                      </div>
+                  )}
+                </div>
+
+                <div className="my-videos-pagination">
+                  <button onClick={() => fetchSharedVideos()}>刷新</button>
+                  <span>{sharedVideosPagination.hasMore ? '还有更多' : '已加载全部'}</span>
+                  <button
+                      disabled={!sharedVideosPagination.hasMore}
+                      onClick={() => fetchSharedVideos(sharedVideosPagination.nextCursor, true)}
+                  >
+                    加载更多
+                  </button>
+                </div>
               </div>
             </div>
         )}

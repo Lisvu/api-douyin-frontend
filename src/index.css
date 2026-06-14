@@ -2272,3 +2272,24 @@ body {
   overflow-y: auto;
   margin: 16px 0;
 }
+
+/* ---- User Search Input (Share Modal) ---- */
+.user-search-input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 8px;
+  font-size: 14px;
+  background: var(--bg-main, #fff);
+  color: var(--text-main, #222);
+  outline: none;
+  transition: border-color 0.2s;
+}
+.user-search-input:focus {
+  border-color: var(--primary-color, #fe2c55);
+}
+
+/* ---- User Search Result Item ---- */
+.user-search-result-item:hover {
+  background: var(--bg-active, rgba(0,0,0,0.05)) !important;
+}
