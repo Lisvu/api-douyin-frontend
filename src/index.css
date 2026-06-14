@@ -1974,6 +1974,16 @@ body {
   cursor: pointer;
   z-index: 1;
   flex-shrink: 0;
+  transition: width 0.25s ease, max-width 0.25s ease, box-shadow 0.25s ease;
+}
+
+.web-video-wrapper.is-zoomed {
+  width: min(92vw, 1400px);
+  max-width: min(92vw, 1400px);
+  aspect-ratio: 16 / 9;
+  height: auto;
+  max-height: calc(100vh - 112px);
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.45);
 }
 
 .web-video-player {
@@ -1981,13 +1991,18 @@ body {
   height: 100%;
   object-fit: contain;
   background: #000;
+  transition: object-fit 0.25s ease;
+}
+
+.web-video-player.is-zoomed {
+  object-fit: cover;
 }
 
 /* 静音按钮 */
-.web-mute-button {
+.web-mute-button,
+.web-zoom-button {
   position: absolute;
   top: 16px;
-  right: 16px;
   width: 40px;
   height: 40px;
   border-radius: 50%;
@@ -2002,11 +2017,21 @@ body {
   transition: background 0.2s;
 }
 
-.web-mute-button:hover {
+.web-mute-button {
+  right: 16px;
+}
+
+.web-zoom-button {
+  right: 64px;
+}
+
+.web-mute-button:hover,
+.web-zoom-button:hover {
   background: rgba(0, 0, 0, 0.75);
 }
 
-.web-mute-button svg {
+.web-mute-button svg,
+.web-zoom-button svg {
   width: 20px;
   height: 20px;
   fill: currentColor;
@@ -2071,6 +2096,16 @@ body {
 }
 
 @media (max-width: 899px) {
+  .web-video-wrapper.is-zoomed {
+    width: 100vw;
+    max-width: 100vw;
+    max-height: calc(100vh - 72px);
+  }
+
+  .web-zoom-button {
+    right: 64px;
+  }
+
   .web-action-bar {
     right: 16px;
   }

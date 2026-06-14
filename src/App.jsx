@@ -14,6 +14,8 @@ const loadStoredUser = () => {
 };
 
 const REQUEST_TIMEOUT_MS = 8000;
+const FEED_PREFETCH_THRESHOLD = 3;
+const MEDIA_PRELOAD_AHEAD = 2;
 
 export default function App() {
   // --- STATE SYSTEM ---
@@ -34,20 +36,23 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
   const [isLoadingFeed, setIsLoadingFeed] = useState(false);
+  const [isLoadingMoreFeed, setIsLoadingMoreFeed] = useState(false);
   const [allViewed, setAllViewed] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
+  const [feedPagination, setFeedPagination] = useState({ nextCursor: null, hasMore: false });
   const [playTriggerAnim, setPlayTriggerAnim] = useState(false);
   const [likingVideoId, setLikingVideoId] = useState(null);
+  const [isVideoZoomed, setIsVideoZoomed] = useState(false);
 
   // Modals & Drawers state
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isMyVideosOpen, setIsMyVideosOpen] = useState(false);
   const [myVideos, setMyVideos] = useState([]);
-  const [myVideosPagination, setMyVideosPagination] = useState({ page: 1, totalPages: 1 });
+  const [myVideosPagination, setMyVideosPagination] = useState({ nextCursor: null, hasMore: false });
   const [isLikeNotificationsOpen, setIsLikeNotificationsOpen] = useState(false);
   const [likeNotifications, setLikeNotifications] = useState([]);
   const [likeNotificationUnreadCount, setLikeNotificationUnreadCount] = useState(0);
-  const [likeNotificationsPagination, setLikeNotificationsPagination] = useState({ page: 1, totalPages: 1 });
+  const [likeNotificationsPagination, setLikeNotificationsPagination] = useState({ nextCursor: null, hasMore: false });
 
   // Video upload form state
   const [uploadTitle, setUploadTitle] = useState('');
@@ -70,6 +75,8 @@ export default function App() {
   const scrollLockRef = useRef(false);
   const touchStartRef = useRef({ y: 0 });
   const videoStageRef = useRef(null);
+  const loadingMoreFeedRef = useRef(false);
+  const preloadedMediaRef = useRef([]);
 
 
   useEffect(() => {
@@ -77,7 +84,7 @@ export default function App() {
     if (!el) return;
     el.addEventListener('wheel', handleWheel, { passive: false });
     return () => el.removeEventListener('wheel', handleWheel);
-  }, [currentIndex, videos.length, allViewed]);
+  }, [currentIndex, videos.length, allViewed, feedPagination, isLoadingMoreFeed]);
 
   // --- AUTOMATIC INITIALIZATION ---
   useEffect(() => {
@@ -174,7 +181,7 @@ export default function App() {
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [token, videos.length, allViewed, currentIndex, currentView]);
+  }, [token, videos.length, allViewed, currentIndex, currentView, feedPagination, isLoadingMoreFeed]);
 
   // --- HELPER UTILITIES ---
   const showToast = (message, isError = false) => {
@@ -319,17 +326,39 @@ export default function App() {
     }
   };
 
-  const fetchRecommendations = async () => {
-    setIsLoadingFeed(true);
-    const data = await apiFetch(`${API_PREFIX}/videos/recommendations`);
-    setIsLoadingFeed(false);
+  const fetchRecommendations = async (cursor = null, append = false) => {
+    if (append) {
+      if (loadingMoreFeedRef.current) return false;
+      loadingMoreFeedRef.current = true;
+      setIsLoadingMoreFeed(true);
+    } else {
+      loadingMoreFeedRef.current = false;
+      setIsLoadingFeed(true);
+    }
+    const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+    const data = await apiFetch(`${API_PREFIX}/videos/recommendations?limit=10${cursorParam}`);
+    if (append) {
+      loadingMoreFeedRef.current = false;
+      setIsLoadingMoreFeed(false);
+    } else {
+      setIsLoadingFeed(false);
+    }
 
     if (data && data.success) {
-      setVideos((data.videos || []).map(normalizeFeedVideo));
-      setAllViewed(data.allViewed);
+      const fetchedVideos = (data.videos || []).map(normalizeFeedVideo);
+      setVideos(prev => append ? [...prev, ...fetchedVideos] : fetchedVideos);
+      setAllViewed(append ? false : data.allViewed);
       setTotalCount(data.totalCount);
-      setCurrentIndex(0);
+      setFeedPagination({
+        nextCursor: data.pagination?.nextCursor ?? null,
+        hasMore: data.pagination?.hasMore ?? false
+      });
+      if (!append) {
+        setCurrentIndex(0);
+      }
+      return fetchedVideos.length > 0;
     }
+    return false;
   };
 
   const recordVideoView = async (videoId) => {
@@ -368,7 +397,13 @@ export default function App() {
     const data = await apiFetch(`${API_PREFIX}/users/me/views`, { method: 'DELETE' });
     if (data && data.success) {
       showToast(data.message);
-      fetchRecommendations();
+      loadingMoreFeedRef.current = false;
+      setIsLoadingMoreFeed(false);
+      setFeedPagination({ nextCursor: null, hasMore: false });
+      setAllViewed(false);
+      setCurrentIndex(0);
+      setVideos([]);
+      await fetchRecommendations();
     }
   };
 
@@ -384,32 +419,35 @@ export default function App() {
     }
   };
 
-  const fetchMyVideos = async (page = 1) => {
-    const data = await apiFetch(`${API_PREFIX}/users/me/videos?page=${page}&limit=6`);
+  const fetchMyVideos = async (cursor = null, append = false) => {
+    const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+    const data = await apiFetch(`${API_PREFIX}/users/me/videos?limit=6${cursorParam}`);
     if (data && data.success) {
-      setMyVideos((data.videos || []).map(normalizeFeedVideo));
+      const fetchedVideos = (data.videos || []).map(normalizeFeedVideo);
+      setMyVideos(prev => append ? [...prev, ...fetchedVideos] : fetchedVideos);
       setMyVideosPagination({
-        page: data.pagination.page,
-        totalPages: data.pagination.totalPages
+        nextCursor: data.pagination?.nextCursor ?? null,
+        hasMore: data.pagination?.hasMore ?? false
       });
     }
   };
 
   const fetchLikeNotificationUnreadCount = async () => {
-    const data = await apiFetch(`${API_PREFIX}/users/me/like-notifications?page=1&limit=1`);
+    const data = await apiFetch(`${API_PREFIX}/users/me/like-notifications?limit=1`);
     if (data && data.success) {
       setLikeNotificationUnreadCount(data.unreadCount ?? 0);
     }
   };
 
-  const fetchLikeNotifications = async (page = 1) => {
-    const data = await apiFetch(`${API_PREFIX}/users/me/like-notifications?page=${page}&limit=10`);
+  const fetchLikeNotifications = async (cursor = null, append = false) => {
+    const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+    const data = await apiFetch(`${API_PREFIX}/users/me/like-notifications?limit=10${cursorParam}`);
     if (data && data.success) {
-      setLikeNotifications(data.notifications || []);
+      setLikeNotifications(prev => append ? [...prev, ...(data.notifications || [])] : data.notifications || []);
       setLikeNotificationUnreadCount(data.unreadCount ?? 0);
       setLikeNotificationsPagination({
-        page: data.pagination?.page ?? page,
-        totalPages: data.pagination?.totalPages ?? 1
+        nextCursor: data.pagination?.nextCursor ?? null,
+        hasMore: data.pagination?.hasMore ?? false
       });
     }
   };
@@ -424,7 +462,7 @@ export default function App() {
 
   const openLikeNotificationsPanel = async () => {
     setIsLikeNotificationsOpen(true);
-    await fetchLikeNotifications(1);
+    await fetchLikeNotifications();
     await markLikeNotificationsRead();
   };
 
@@ -504,17 +542,17 @@ export default function App() {
 
   const handleDeleteVideo = (videoId, e) => {
     e.stopPropagation();
-    setDeleteConfirm({ videoId, page: myVideosPagination.page });
+    setDeleteConfirm({ videoId });
   };
 
   const confirmDeleteVideo = async () => {
     if (!deleteConfirm) return;
-    const { videoId, page } = deleteConfirm;
+    const { videoId } = deleteConfirm;
     setDeleteConfirm(null);
     const data = await apiFetch(`${API_PREFIX}/videos/${videoId}`, { method: 'DELETE' });
     if (data && data.success) {
       showToast('视频已成功下架！');
-      fetchMyVideos(page);
+      fetchMyVideos();
       fetchRecommendations();
       if (user?.role === 'ADMIN' && currentView === 'admin') {
         fetchDevDashboardData();
@@ -553,11 +591,57 @@ export default function App() {
     setIsMuted(prev => !prev);
   };
 
-  const handleNextVideo = () => {
+  const toggleVideoZoom = (e) => {
+    e.stopPropagation();
+    setIsVideoZoomed(prev => !prev);
+  };
+
+  const loadMoreFeed = async () => {
+    if (!feedPagination.hasMore || !feedPagination.nextCursor || loadingMoreFeedRef.current) {
+      return false;
+    }
+    return fetchRecommendations(feedPagination.nextCursor, true);
+  };
+
+  useEffect(() => {
+    if (!token || currentView !== 'feed' || videos.length === 0 || allViewed) return;
+    const remainingVideos = videos.length - 1 - currentIndex;
+    if (remainingVideos <= FEED_PREFETCH_THRESHOLD) {
+      loadMoreFeed();
+    }
+    // loadMoreFeed closes over the latest cursor state listed below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, currentView, currentIndex, videos.length, allViewed, feedPagination.nextCursor, feedPagination.hasMore]);
+
+  useEffect(() => {
+    if (currentView !== 'feed' || videos.length === 0) {
+      preloadedMediaRef.current = [];
+      return;
+    }
+
+    preloadedMediaRef.current = videos
+        .slice(currentIndex + 1, currentIndex + 1 + MEDIA_PRELOAD_AHEAD)
+        .map(video => {
+          const preloadVideo = document.createElement('video');
+          preloadVideo.preload = 'auto';
+          preloadVideo.muted = true;
+          preloadVideo.playsInline = true;
+          preloadVideo.src = getMediaUrl(video.video_url);
+          preloadVideo.load();
+          return preloadVideo;
+        });
+  }, [currentView, currentIndex, videos]);
+
+  const handleNextVideo = async () => {
     if (currentIndex < videos.length - 1) {
       setCurrentIndex(prev => prev + 1);
     } else {
-      showToast('👏 您已看完所有推荐！点击右侧的"重置已看"即可从头刷起！');
+      const loaded = await loadMoreFeed();
+      if (loaded) {
+        setCurrentIndex(prev => prev + 1);
+      } else if (!feedPagination.hasMore) {
+        showToast('👏 您已看完所有推荐！点击右侧的"重置已看"即可从头刷起！');
+      }
     }
   };
 
@@ -587,7 +671,8 @@ export default function App() {
         lockScrollTransition();
         setCurrentIndex(prev => prev + 1);
       } else {
-        showToast('👏 您已看完所有推荐！点击右侧的"重置已看"即可从头刷起！');
+        lockScrollTransition();
+        handleNextVideo();
       }
     } else if (deltaY < -threshold) {
       if (currentIndex > 0) {
@@ -606,7 +691,8 @@ export default function App() {
         lockScrollTransition();
         setCurrentIndex(prev => prev + 1);
       } else {
-        showToast('👏 您已看完所有推荐！点击右侧的"重置已看"即可从头刷起！');
+        lockScrollTransition();
+        handleNextVideo();
       }
     } else if (e.deltaY < -30) {
       if (currentIndex > 0) {
@@ -618,7 +704,7 @@ export default function App() {
 
   const openMyVideosPanel = () => {
     setIsMyVideosOpen(true);
-    fetchMyVideos(1);
+    fetchMyVideos();
   };
 
   const formatBody = (body) => {
@@ -801,10 +887,10 @@ export default function App() {
                     />
 
                     {/* Center video player */}
-                    <div className="web-video-wrapper" onClick={togglePlayState}>
+                    <div className={`web-video-wrapper ${isVideoZoomed ? 'is-zoomed' : ''}`} onClick={togglePlayState}>
                       <video
                           ref={videoRef}
-                          className="web-video-player"
+                          className={`web-video-player ${isVideoZoomed ? 'is-zoomed' : ''}`}
                           loop
                           muted={isMuted}
                           preload="metadata"
@@ -832,6 +918,18 @@ export default function App() {
                             <svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.62 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73L16.25 17.52c-.67.52-1.43.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
                         ) : (
                             <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                        )}
+                      </button>
+
+                      <button
+                          className="web-zoom-button"
+                          onClick={toggleVideoZoom}
+                          title={isVideoZoomed ? '还原视频大小' : '放大视频'}
+                      >
+                        {isVideoZoomed ? (
+                            <svg viewBox="0 0 24 24"><path d="M5 14h2v3h3v2H5v-5zm12 3v-3h2v5h-5v-2h3zM7 7v3H5V5h5v2H7zm12 3h-2V7h-3V5h5v5z"/></svg>
+                        ) : (
+                            <svg viewBox="0 0 24 24"><path d="M15 3h6v6h-2V6.41l-4.29 4.3-1.42-1.42 4.3-4.29H15V3zM9 21H3v-6h2v2.59l4.29-4.3 1.42 1.42-4.3 4.29H9V21zm12 0h-6v-2h2.59l-4.3-4.29 1.42-1.42 4.29 4.3V15h2v6zM3 9V3h6v2H6.41l4.3 4.29-1.42 1.42-4.29-4.3V9H3z"/></svg>
                         )}
                       </button>
 
@@ -945,7 +1043,7 @@ export default function App() {
                       <button
                           className="arrow-nav-btn"
                           onClick={handleNextVideo}
-                          disabled={currentIndex === videos.length - 1}
+                          disabled={currentIndex === videos.length - 1 && !feedPagination.hasMore}
                           title="下一个视频"
                       >
                         <svg style={{ width: 22, height: 22, fill: 'currentColor' }} viewBox="0 0 24 24">
@@ -956,7 +1054,7 @@ export default function App() {
 
                     {/* Progress indicator */}
                     <div className="web-feed-progress">
-                      {currentIndex + 1} / {videos.length}
+                      {currentIndex + 1} / {videos.length}{isLoadingMoreFeed ? ' · 加载中...' : ''}
                     </div>
                   </div>
               ) : (
@@ -1154,17 +1252,16 @@ export default function App() {
 
                 <div className="my-videos-pagination">
                   <button
-                      disabled={myVideosPagination.page === 1}
-                      onClick={() => fetchMyVideos(myVideosPagination.page - 1)}
+                      onClick={() => fetchMyVideos()}
                   >
-                    上一页
+                    刷新
                   </button>
-                  <span>第 {myVideosPagination.page} / {myVideosPagination.totalPages || 1} 页</span>
+                  <span>{myVideosPagination.hasMore ? '还有更多作品' : '已加载全部作品'}</span>
                   <button
-                      disabled={myVideosPagination.page >= myVideosPagination.totalPages}
-                      onClick={() => fetchMyVideos(myVideosPagination.page + 1)}
+                      disabled={!myVideosPagination.hasMore}
+                      onClick={() => fetchMyVideos(myVideosPagination.nextCursor, true)}
                   >
-                    下一页
+                    加载更多
                   </button>
                 </div>
               </div>
@@ -1218,17 +1315,16 @@ export default function App() {
 
                 <div className="my-videos-pagination">
                   <button
-                      disabled={likeNotificationsPagination.page === 1}
-                      onClick={() => fetchLikeNotifications(likeNotificationsPagination.page - 1)}
+                      onClick={() => fetchLikeNotifications()}
                   >
-                    上一页
+                    刷新
                   </button>
-                  <span>第 {likeNotificationsPagination.page} / {likeNotificationsPagination.totalPages || 1} 页</span>
+                  <span>{likeNotificationsPagination.hasMore ? '还有更多通知' : '已加载全部通知'}</span>
                   <button
-                      disabled={likeNotificationsPagination.page >= likeNotificationsPagination.totalPages}
-                      onClick={() => fetchLikeNotifications(likeNotificationsPagination.page + 1)}
+                      disabled={!likeNotificationsPagination.hasMore}
+                      onClick={() => fetchLikeNotifications(likeNotificationsPagination.nextCursor, true)}
                   >
-                    下一页
+                    加载更多
                   </button>
                 </div>
               </div>
