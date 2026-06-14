@@ -16,6 +16,15 @@ const loadStoredUser = () => {
 const REQUEST_TIMEOUT_MS = 8000;
 const FEED_PREFETCH_THRESHOLD = 3;
 const MEDIA_PRELOAD_AHEAD = 2;
+const PLAYBACK_SPEED_OPTIONS = [0.5, 1, 1.25, 1.5, 2];
+
+const formatVideoTime = (seconds) => {
+  if (!Number.isFinite(seconds) || seconds < 0) return '00:00';
+  const totalSeconds = Math.floor(seconds);
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainSeconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(remainSeconds).padStart(2, '0')}`;
+};
 
 export default function App() {
   // --- STATE SYSTEM ---
@@ -43,6 +52,8 @@ export default function App() {
   const [playTriggerAnim, setPlayTriggerAnim] = useState(false);
   const [likingVideoId, setLikingVideoId] = useState(null);
   const [isVideoZoomed, setIsVideoZoomed] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [playbackProgress, setPlaybackProgress] = useState({ currentTime: 0, duration: 0 });
 
   // Modals & Drawers state
   const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -143,6 +154,7 @@ export default function App() {
       return;
     }
     if (videos.length > 0 && videoRef.current) {
+      setPlaybackProgress({ currentTime: 0, duration: 0 });
       setIsPlaying(false);
       videoRef.current.load();
       videoRef.current.muted = isMuted;
@@ -166,6 +178,12 @@ export default function App() {
       videoRef.current.muted = isMuted;
     }
   }, [isMuted]);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.playbackRate = playbackRate;
+    }
+  }, [playbackRate, currentIndex, videos]);
 
   // Keyboard navigation: ArrowUp / ArrowDown to switch videos (F03)
   useEffect(() => {
@@ -596,6 +614,41 @@ export default function App() {
     setIsVideoZoomed(prev => !prev);
   };
 
+  const handleVideoTimeUpdate = () => {
+    if (!videoRef.current) return;
+    setPlaybackProgress({
+      currentTime: videoRef.current.currentTime || 0,
+      duration: Number.isFinite(videoRef.current.duration) ? videoRef.current.duration : 0
+    });
+  };
+
+  const handleVideoLoadedMetadata = () => {
+    if (!videoRef.current) return;
+    videoRef.current.playbackRate = playbackRate;
+    handleVideoTimeUpdate();
+  };
+
+  const handleSeekVideo = (e) => {
+    e.stopPropagation();
+    if (!videoRef.current) return;
+    const duration = Number.isFinite(videoRef.current.duration) ? videoRef.current.duration : 0;
+    if (duration <= 0) return;
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(Math.max((e.clientX - rect.left) / rect.width, 0), 1);
+    videoRef.current.currentTime = duration * ratio;
+    handleVideoTimeUpdate();
+  };
+
+  const handlePlaybackRateChange = (e) => {
+    e.stopPropagation();
+    const nextRate = Number(e.target.value);
+    setPlaybackRate(nextRate);
+    if (videoRef.current) {
+      videoRef.current.playbackRate = nextRate;
+    }
+  };
+
   const loadMoreFeed = async () => {
     if (!feedPagination.hasMore || !feedPagination.nextCursor || loadingMoreFeedRef.current) {
       return false;
@@ -793,6 +846,9 @@ export default function App() {
 
   const activeVideo = videos[currentIndex];
   const isAdmin = user?.role === 'ADMIN';
+  const progressPercent = playbackProgress.duration > 0
+      ? (playbackProgress.currentTime / playbackProgress.duration) * 100
+      : 0;
 
   return (
       <div className="webapp-container">
@@ -897,6 +953,8 @@ export default function App() {
                           playsInline
                           src={getMediaUrl(activeVideo.video_url)}
                           poster={activeVideo.cover_url ? getMediaUrl(activeVideo.cover_url) : undefined}
+                          onTimeUpdate={handleVideoTimeUpdate}
+                          onLoadedMetadata={handleVideoLoadedMetadata}
                       />
 
                       {/* Play/Pause animation overlay */}
@@ -943,6 +1001,25 @@ export default function App() {
                           {activeVideo.title} {activeVideo.description && `— ${activeVideo.description}`}
                         </div>
                         <div className="video-hashtags">#智能算法推荐 #SpringBoot #React</div>
+                      </div>
+
+                      <div className="web-video-controls" onClick={(e) => e.stopPropagation()}>
+                        <div className="web-video-progress-track" onClick={handleSeekVideo}>
+                          <div className="web-video-progress-fill" style={{ width: `${progressPercent}%` }} />
+                        </div>
+                        <div className="web-video-controls-row">
+                          <span className="web-video-time">
+                            {formatVideoTime(playbackProgress.currentTime)} / {formatVideoTime(playbackProgress.duration)}
+                          </span>
+                          <label className="web-video-speed">
+                            <span>倍速</span>
+                            <select value={playbackRate} onChange={handlePlaybackRateChange}>
+                              {PLAYBACK_SPEED_OPTIONS.map((rate) => (
+                                  <option key={rate} value={rate}>{rate}x</option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
                       </div>
                     </div>
 

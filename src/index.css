@@ -1998,6 +1998,72 @@ body {
   object-fit: cover;
 }
 
+.web-video-controls {
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: 14px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.web-video-progress-track {
+  position: relative;
+  width: 100%;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.web-video-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.96);
+  width: 0%;
+  transition: width 0.1s linear;
+}
+
+.web-video-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.web-video-time {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.web-video-speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.web-video-speed select {
+  min-width: 78px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  background: rgba(15, 18, 24, 0.82);
+  color: #fff;
+  padding: 6px 10px;
+  font-size: 12px;
+  outline: none;
+}
+
+.web-video-speed select:focus {
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+}
+
 /* 静音按钮 */
 .web-mute-button,
 .web-zoom-button {
@@ -2043,7 +2109,7 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 60px 20px 20px;
+  padding: 60px 20px 62px;
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
   color: #fff;
   pointer-events: none;
@@ -2153,6 +2219,17 @@ body {
     top: auto;
     bottom: 200px;
     transform: none;
+  }
+
+  .web-video-controls {
+    left: 14px;
+    right: 14px;
+    bottom: 12px;
+  }
+
+  .web-video-controls-row {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 
