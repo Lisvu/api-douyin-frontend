@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 // Backend host configuration
-const API_BASE = '';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const API_PREFIX = '/api/v1';
 
 const loadStoredUser = () => {
