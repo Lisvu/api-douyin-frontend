@@ -36,7 +36,7 @@ export default function App() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
-  // View switching: 'feed' (用户视频页) | 'admin' (管理员监控台)
+  // View switching: 'feed' (用户视频页) | 'admin' (管理员监控台) | 'profile' (用户主页)
   const [currentView, setCurrentView] = useState('feed');
 
   // Video feed state
@@ -82,6 +82,24 @@ export default function App() {
   const [isSharedVideosOpen, setIsSharedVideosOpen] = useState(false);
   const [sharedVideos, setSharedVideos] = useState([]);
   const [sharedVideosPagination, setSharedVideosPagination] = useState({ nextCursor: null, hasMore: false });
+
+  // Video comments
+  const [isCommentsOpen, setIsCommentsOpen] = useState(false);
+  const [commentsVideoId, setCommentsVideoId] = useState(null);
+  const [comments, setComments] = useState([]);
+  const [commentsPagination, setCommentsPagination] = useState({ nextCursor: null, hasMore: false });
+  const [commentsTotalCount, setCommentsTotalCount] = useState(0);
+  const [commentDraft, setCommentDraft] = useState('');
+  const [isPostingComment, setIsPostingComment] = useState(false);
+  const [isLoadingComments, setIsLoadingComments] = useState(false);
+
+  // User profile page
+  const [profileUserId, setProfileUserId] = useState(null);
+  const [profileUser, setProfileUser] = useState(null);
+  const [profileTab, setProfileTab] = useState('published');
+  const [profileVideos, setProfileVideos] = useState([]);
+  const [profileVideosPagination, setProfileVideosPagination] = useState({ nextCursor: null, hasMore: false });
+  const [isLoadingProfile, setIsLoadingProfile] = useState(false);
 
   // Video upload form state
   const [uploadTitle, setUploadTitle] = useState('');
@@ -232,10 +250,13 @@ export default function App() {
         ? video.liked
         : (video.is_liked === 1 || video.is_liked === true);
     const likeCount = video.likeCount ?? video.likes_count ?? video.likesCount ?? 0;
+    const commentCount = video.commentCount ?? video.comments_count ?? 0;
     return {
       ...video,
       liked,
       likeCount,
+      commentCount,
+      comments_count: commentCount,
       is_liked: liked ? 1 : 0,
       likes_count: likeCount,
       likesCount: likeCount,
@@ -251,6 +272,28 @@ export default function App() {
       if (v.id !== videoId) return v;
       return normalizeFeedVideo({ ...v, liked, likeCount });
     }));
+    setProfileVideos(prev => prev.map(v => {
+      if (v.id !== videoId) return v;
+      return normalizeFeedVideo({ ...v, liked, likeCount });
+    }));
+  };
+
+  const updateVideoCommentCount = (videoId, commentCount) => {
+    const patch = (v) => v.id === videoId
+        ? { ...v, comments_count: commentCount, commentCount }
+        : v;
+    setVideos(prev => prev.map(patch));
+    setMyVideos(prev => prev.map(patch));
+    setProfileVideos(prev => prev.map(patch));
+  };
+
+  const getAvatarUrl = (userOrSeed) => {
+    if (userOrSeed && typeof userOrSeed === 'object') {
+      if (userOrSeed.avatarUrl) return getMediaUrl(userOrSeed.avatarUrl);
+      const seed = userOrSeed.username || userOrSeed.displayName || 'user';
+      return `https://api.dicebear.com/7.x/bottts/svg?seed=${seed}`;
+    }
+    return `https://api.dicebear.com/7.x/bottts/svg?seed=${userOrSeed || 'user'}`;
   };
 
   const getMediaUrl = (url) => {
@@ -562,6 +605,123 @@ export default function App() {
     setIsLikeNotificationsOpen(true);
     await fetchLikeNotifications();
     await markLikeNotificationsRead();
+  };
+
+  const openCommentsPanel = async (videoId) => {
+    setCommentsVideoId(videoId);
+    setIsCommentsOpen(true);
+    setCommentDraft('');
+    setComments([]);
+    await fetchComments(videoId);
+  };
+
+  const fetchComments = async (videoId, cursor = null, append = false) => {
+    setIsLoadingComments(true);
+    const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+    const data = await apiFetch(`${API_PREFIX}/videos/${videoId}/comments?limit=20${cursorParam}`);
+    setIsLoadingComments(false);
+    if (data && data.success) {
+      setComments(prev => append ? [...prev, ...(data.comments || [])] : data.comments || []);
+      setCommentsTotalCount(data.totalCount ?? 0);
+      setCommentsPagination({
+        nextCursor: data.pagination?.nextCursor ?? null,
+        hasMore: data.pagination?.hasMore ?? false
+      });
+    }
+  };
+
+  const handlePostComment = async (e) => {
+    e?.preventDefault();
+    const content = commentDraft.trim();
+    if (!content || !commentsVideoId || isPostingComment) return;
+
+    setIsPostingComment(true);
+    const data = await apiFetch(`${API_PREFIX}/videos/${commentsVideoId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ content })
+    });
+    setIsPostingComment(false);
+
+    if (data && data.success) {
+      setCommentDraft('');
+      const newCount = data.commentsCount ?? commentsTotalCount + 1;
+      setCommentsTotalCount(newCount);
+      updateVideoCommentCount(commentsVideoId, newCount);
+      if (data.comment) {
+        setComments(prev => [data.comment, ...prev]);
+      } else {
+        await fetchComments(commentsVideoId);
+      }
+      showToast('评论发表成功');
+    } else if (data) {
+      showToast(data.message || '评论失败', true);
+    }
+  };
+
+  const openUserProfile = async (userId) => {
+    if (!userId) return;
+    setProfileUserId(userId);
+    setProfileTab('published');
+    setProfileVideos([]);
+    setProfileVideosPagination({ nextCursor: null, hasMore: false });
+    setProfileUser(null);
+    setCurrentView('profile');
+    setIsLoadingProfile(true);
+    await fetchUserProfile(userId);
+    await fetchProfileVideos('published', userId);
+    setIsLoadingProfile(false);
+  };
+
+  const closeUserProfile = () => {
+    setCurrentView('feed');
+    setProfileUserId(null);
+    setProfileUser(null);
+    setProfileVideos([]);
+  };
+
+  const fetchUserProfile = async (userId) => {
+    const data = await apiFetch(`${API_PREFIX}/users/${userId}`);
+    if (data && data.success) {
+      setProfileUser(data.user);
+    } else {
+      showToast(data?.message || '无法加载用户资料', true);
+    }
+  };
+
+  const fetchProfileVideos = async (tab, userId, cursor = null, append = false) => {
+    const targetId = userId ?? profileUserId;
+    if (!targetId) return;
+    const endpoint = tab === 'liked'
+        ? `${API_PREFIX}/users/${targetId}/liked-videos`
+        : `${API_PREFIX}/users/${targetId}/videos`;
+    const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+    const data = await apiFetch(`${endpoint}?limit=8${cursorParam}`);
+    if (data && data.success) {
+      const fetchedVideos = (data.videos || []).map(normalizeFeedVideo);
+      setProfileVideos(prev => append ? [...prev, ...fetchedVideos] : fetchedVideos);
+      setProfileVideosPagination({
+        nextCursor: data.pagination?.nextCursor ?? null,
+        hasMore: data.pagination?.hasMore ?? false
+      });
+    }
+  };
+
+  const switchProfileTab = async (tab) => {
+    if (tab === profileTab) return;
+    setProfileTab(tab);
+    setProfileVideos([]);
+    setProfileVideosPagination({ nextCursor: null, hasMore: false });
+    await fetchProfileVideos(tab, profileUserId);
+  };
+
+  const handlePlayProfileVideo = (videoItem) => {
+    loadingMoreFeedRef.current = false;
+    setIsLoadingMoreFeed(false);
+    setFeedPagination({ nextCursor: null, hasMore: false });
+    setVideos([videoItem]);
+    setCurrentIndex(0);
+    setAllViewed(false);
+    closeUserProfile();
   };
 
   const formatNotificationTime = (value) => {
@@ -1169,7 +1329,11 @@ export default function App() {
 
                       {/* Bottom video meta */}
                       <div className="web-video-meta">
-                        <div className="creator-handle">
+                        <div
+                            className="creator-handle clickable-profile"
+                            onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
+                            title="进入作者主页"
+                        >
                           @{activeVideo.creator_name || '未知创作者'}
                           {activeVideo.user_id === user?.id && <span className="my-publish-badge">我的发布</span>}
                         </div>
@@ -1201,10 +1365,14 @@ export default function App() {
 
                     {/* Right floating action bar */}
                     <div className="web-action-bar">
-                      <div className="sidebar-avatar-wrapper">
+                      <div
+                          className="sidebar-avatar-wrapper clickable-profile"
+                          onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
+                          title="进入作者主页"
+                      >
                         <div className="sidebar-avatar">
                           <img
-                              src={`https://api.dicebear.com/7.x/bottts/svg?seed=${activeVideo.creator_name}`}
+                              src={getAvatarUrl(activeVideo.creator_name)}
                               alt="avatar"
                           />
                         </div>
@@ -1229,6 +1397,20 @@ export default function App() {
                           </svg>
                         </div>
                         <span className="action-count">{activeVideo.likeCount ?? 0}</span>
+                      </button>
+
+                      {/* Comment button */}
+                      <button
+                          className="action-item-button special-action"
+                          onClick={(e) => { e.stopPropagation(); openCommentsPanel(activeVideo.id); }}
+                          title="查看评论"
+                      >
+                        <div className="action-icon-circle">
+                          <svg viewBox="0 0 24 24">
+                            <path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z" />
+                          </svg>
+                        </div>
+                        <span className="action-count">{activeVideo.commentCount ?? activeVideo.comments_count ?? 0}</span>
                       </button>
 
                       {/* Share button */}
@@ -1351,6 +1533,118 @@ export default function App() {
                     <button className="reset-views-btn" onClick={() => setIsUploadOpen(true)}>
                       ➕ 发布全站首款视频
                     </button>
+                  </div>
+              )}
+            </main>
+        )}
+
+        {/* ============================================== */}
+        {/* VIEW: USER PROFILE PAGE                         */}
+        {/* ============================================== */}
+        {currentView === 'profile' && (
+            <main className="user-profile-page">
+              <div className="profile-top-bar">
+                <button className="profile-back-btn" onClick={closeUserProfile} title="返回推荐">
+                  <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" /></svg>
+                  返回
+                </button>
+              </div>
+
+              {isLoadingProfile && !profileUser ? (
+                  <div className="profile-loading">
+                    <div className="loading-spinner" />
+                    <p>加载用户资料...</p>
+                  </div>
+              ) : profileUser ? (
+                  <>
+                    <div className="profile-header">
+                      <div className="profile-avatar-large">
+                        <img src={getAvatarUrl(profileUser)} alt={profileUser.username} />
+                      </div>
+                      <div className="profile-info">
+                        <h2>@{profileUser.username}</h2>
+                        <div className="profile-id">用户 ID：{profileUser.id}</div>
+                        {profileUser.displayName && (
+                            <div className="profile-display-name">{profileUser.displayName}</div>
+                        )}
+                        <div className="profile-stats">
+                          <span className="profile-stat-item">
+                            <strong>{profileUser.totalLikesReceived ?? 0}</strong> 获赞
+                          </span>
+                          <span className="profile-stat-item">
+                            <strong>{profileUser.publishedVideoCount ?? 0}</strong> 作品
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="profile-tabs">
+                      <button
+                          className={`profile-tab ${profileTab === 'published' ? 'active' : ''}`}
+                          onClick={() => switchProfileTab('published')}
+                      >
+                        发布的视频
+                      </button>
+                      <button
+                          className={`profile-tab ${profileTab === 'liked' ? 'active' : ''}`}
+                          onClick={() => switchProfileTab('liked')}
+                      >
+                        点赞的视频
+                      </button>
+                    </div>
+
+                    <div className="profile-videos-section">
+                      {profileVideos.length > 0 ? (
+                          <div className="my-videos-grid web-modal-grid profile-video-grid">
+                            {profileVideos.map((pv) => (
+                                <div
+                                    key={`profile-${profileTab}-${pv.id}`}
+                                    className="grid-video-card"
+                                    onClick={() => handlePlayProfileVideo(pv)}
+                                >
+                                  <img
+                                      className="grid-video-cover"
+                                      src={getMediaUrl(pv.cover_url)}
+                                      alt={pv.title}
+                                  />
+                                  <div className="grid-video-info">
+                                    <svg viewBox="0 0 24 24">
+                                      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                                    </svg>
+                                    <span>{pv.likeCount ?? pv.likes_count ?? 0}</span>
+                                  </div>
+                                </div>
+                            ))}
+                          </div>
+                      ) : (
+                          <div className="profile-videos-empty">
+                            <p>{profileTab === 'published' ? '该用户还没有发布视频' : '该用户还没有点赞任何视频'}</p>
+                          </div>
+                      )}
+
+                      <div className="my-videos-pagination profile-pagination">
+                        <button onClick={() => fetchProfileVideos(profileTab, profileUserId)}>
+                          刷新
+                        </button>
+                        <span>{profileVideosPagination.hasMore ? '还有更多' : '已加载全部'}</span>
+                        <button
+                            disabled={!profileVideosPagination.hasMore}
+                            onClick={() => fetchProfileVideos(
+                                profileTab,
+                                profileUserId,
+                                profileVideosPagination.nextCursor,
+                                true
+                            )}
+                        >
+                          加载更多
+                        </button>
+                      </div>
+                    </div>
+                  </>
+              ) : (
+                  <div className="profile-loading">
+                    <p>用户不存在或无法加载</p>
+                    <button className="reset-views-btn" onClick={closeUserProfile}>返回推荐</button>
                   </div>
               )}
             </main>
@@ -1488,6 +1782,82 @@ export default function App() {
         {/* ============================================== */}
         {/* MODALS                                          */}
         {/* ============================================== */}
+
+        {/* Comments Modal */}
+        {isCommentsOpen && (
+            <div className="modal-overlay comments-overlay" onClick={() => setIsCommentsOpen(false)}>
+              <div className="modal-content comments-panel" onClick={e => e.stopPropagation()}>
+                <button className="modal-close-btn" onClick={() => setIsCommentsOpen(false)}>
+                  <svg viewBox="0 0 24 24">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                  </svg>
+                </button>
+
+                <h3>评论 ({commentsTotalCount})</h3>
+
+                <div className="comments-list">
+                  {isLoadingComments && comments.length === 0 ? (
+                      <div className="comments-loading">
+                        <div className="loading-spinner" />
+                      </div>
+                  ) : comments.length > 0 ? (
+                      comments.map(item => (
+                          <div key={item.id} className="comment-item">
+                            <div
+                                className="comment-avatar clickable-profile"
+                                onClick={() => { setIsCommentsOpen(false); openUserProfile(item.userId); }}
+                                title="查看用户主页"
+                            >
+                              <img src={getAvatarUrl(item.username)} alt={item.username} />
+                            </div>
+                            <div className="comment-body">
+                              <div className="comment-author-row">
+                                <span
+                                    className="comment-author clickable-profile"
+                                    onClick={() => { setIsCommentsOpen(false); openUserProfile(item.userId); }}
+                                >
+                                  @{item.username}
+                                </span>
+                                <span className="comment-time">{formatNotificationTime(item.createdAt)}</span>
+                              </div>
+                              <div className="comment-text">{item.content}</div>
+                            </div>
+                          </div>
+                      ))
+                  ) : (
+                      <div className="comments-empty">
+                        <p>还没有评论，来抢沙发吧</p>
+                      </div>
+                  )}
+                </div>
+
+                {commentsPagination.hasMore && (
+                    <div className="comments-load-more">
+                      <button
+                          disabled={isLoadingComments}
+                          onClick={() => fetchComments(commentsVideoId, commentsPagination.nextCursor, true)}
+                      >
+                        {isLoadingComments ? '加载中...' : '加载更多评论'}
+                      </button>
+                    </div>
+                )}
+
+                <form className="comment-compose" onSubmit={handlePostComment}>
+                  <input
+                      type="text"
+                      placeholder="写下你的评论..."
+                      value={commentDraft}
+                      onChange={e => setCommentDraft(e.target.value)}
+                      maxLength={500}
+                      disabled={isPostingComment}
+                  />
+                  <button type="submit" disabled={isPostingComment || !commentDraft.trim()}>
+                    {isPostingComment ? '发送中...' : '发送'}
+                  </button>
+                </form>
+              </div>
+            </div>
+        )}
 
         {/* My Videos Modal */}
         {isMyVideosOpen && (
