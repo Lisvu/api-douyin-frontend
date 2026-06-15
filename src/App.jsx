@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 // Backend host configuration
-const API_BASE = '';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const API_PREFIX = '/api/v1';
 
 const loadStoredUser = () => {
@@ -183,6 +183,9 @@ export default function App() {
   const [devLogs, setDevLogs] = useState([]);
   const [logDetailModal, setLogDetailModal] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  // Batch delete management for "我的作品"
+  const [batchManageMode, setBatchManageMode] = useState(false);
+  const [selectedVideoIds, setSelectedVideoIds] = useState(new Set());
 
   // UI Toast message
   const [toast, setToast] = useState(null);
@@ -414,7 +417,7 @@ export default function App() {
     const { silent = false, timeoutMs = REQUEST_TIMEOUT_MS, ...fetchOptions } = options;
     const headers = { ...fetchOptions.headers };
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
@@ -1249,7 +1252,8 @@ export default function App() {
     }, 200);
     const data = await apiFetch(`${API_PREFIX}/videos`, {
       method: 'POST',
-      body: formData
+      body: formData,
+      timeoutMs: 0  // 视频上传不限时
     });
     clearInterval(progressInterval);
     setUploadProgress(100);
@@ -1298,6 +1302,59 @@ export default function App() {
       }
     } else if (data) {
       showToast(data.message || '删除失败', true);
+    }
+  };
+
+  // Batch delete management
+  const toggleBatchMode = () => {
+    setBatchManageMode(prev => !prev);
+    setSelectedVideoIds(new Set());
+  };
+
+  const toggleVideoSelection = (videoId, e) => {
+    e.stopPropagation();
+    setSelectedVideoIds(prev => {
+      const next = new Set(prev);
+      if (next.has(videoId)) {
+        next.delete(videoId);
+      } else {
+        next.add(videoId);
+      }
+      return next;
+    });
+  };
+
+  const selectAllVideos = () => {
+    if (myVideos.length === 0) return;
+    const allIds = new Set(myVideos.map(v => v.id));
+    if (selectedVideoIds.size === allIds.size) {
+      setSelectedVideoIds(new Set());
+    } else {
+      setSelectedVideoIds(allIds);
+    }
+  };
+
+  const executeBatchDelete = async () => {
+    if (selectedVideoIds.size === 0) {
+      showToast('请至少选择一个视频', true);
+      return;
+    }
+    const ids = Array.from(selectedVideoIds);
+    const data = await apiFetch(`${API_PREFIX}/videos/batch-delete`, {
+      method: 'POST',
+      body: JSON.stringify({ videoIds: ids })
+    });
+    if (data && data.success) {
+      showToast(`成功删除 ${ids.length} 个视频`);
+      setBatchManageMode(false);
+      setSelectedVideoIds(new Set());
+      fetchMyVideos();
+      fetchRecommendations();
+      if (user?.role === 'ADMIN' && currentView === 'admin') {
+        fetchDevDashboardData();
+      }
+    } else if (data) {
+      showToast(data.message || '批量删除失败', true);
     }
   };
 
@@ -2544,9 +2601,9 @@ export default function App() {
 
         {/* My Videos Modal */}
         {isMyVideosOpen && (
-            <div className="modal-overlay" onClick={() => setIsMyVideosOpen(false)}>
+            <div className="modal-overlay" onClick={() => { setIsMyVideosOpen(false); setBatchManageMode(false); setSelectedVideoIds(new Set()); }}>
               <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 640 }}>
-                <button className="modal-close-btn" onClick={() => setIsMyVideosOpen(false)}>
+                <button className="modal-close-btn" onClick={() => { setIsMyVideosOpen(false); setBatchManageMode(false); setSelectedVideoIds(new Set()); }}>
                   <svg viewBox="0 0 24 24">
                     <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
                   </svg>
@@ -2554,24 +2611,61 @@ export default function App() {
 
                 <h3>我的作品 ({myVideos.length})</h3>
 
+                <div className="my-videos-toolbar">
+                  <button
+                    className={`my-videos-batch-toggle-btn ${batchManageMode ? 'active' : ''}`}
+                    onClick={toggleBatchMode}
+                  >
+                    {batchManageMode ? '退出管理' : '批量管理'}
+                  </button>
+                  {batchManageMode && (
+                    <>
+                      <button className="my-videos-batch-toggle-btn" onClick={selectAllVideos}>
+                        {selectedVideoIds.size === myVideos.length && myVideos.length > 0
+                          ? '取消全选'
+                          : '全选'}
+                      </button>
+                      <button
+                        className="my-videos-batch-delete-btn"
+                        disabled={selectedVideoIds.size === 0}
+                        onClick={executeBatchDelete}
+                      >
+                        批量删除 ({selectedVideoIds.size})
+                      </button>
+                    </>
+                  )}
+                </div>
+
                 <div className="my-videos-grid web-modal-grid">
                   {myVideos.length > 0 ? (
                       myVideos.map((mv, idx) => (
-                          <div key={mv.id} className="grid-video-card" onClick={() => handlePlayMyVideo(idx)}>
+                          <div
+                            key={mv.id}
+                            className={`grid-video-card ${batchManageMode ? 'batch-selectable' : ''}`}
+                            onClick={batchManageMode ? (e) => toggleVideoSelection(mv.id, e) : () => handlePlayMyVideo(idx)}
+                          >
                             <img
                                 className="grid-video-cover"
                                 src={getMediaUrl(mv.cover_url)}
                                 alt={mv.title}
                             />
-                            <button
-                                className="grid-card-delete-btn"
-                                onClick={(e) => handleDeleteVideo(mv.id, e)}
-                                title="删除此视频"
-                            >
-                              <svg viewBox="0 0 24 24">
-                                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                              </svg>
-                            </button>
+                            {batchManageMode ? (
+                              <div className={`grid-card-checkbox ${selectedVideoIds.has(mv.id) ? 'checked' : ''}`}>
+                                <svg viewBox="0 0 24 24">
+                                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                                </svg>
+                              </div>
+                            ) : (
+                              <button
+                                  className="grid-card-delete-btn"
+                                  onClick={(e) => handleDeleteVideo(mv.id, e)}
+                                  title="删除此视频"
+                              >
+                                <svg viewBox="0 0 24 24">
+                                  <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                                </svg>
+                              </button>
+                            )}
                             <div className="grid-video-info">
                               <svg viewBox="0 0 24 24">
                                 <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
