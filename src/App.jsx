@@ -32,12 +32,13 @@ export default function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || '');
   const [user, setUser] = useState(loadStoredUser());
   const [isCheckingSession, setIsCheckingSession] = useState(!!localStorage.getItem('token'));
-  const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
+  const [authMode, setAuthMode] = useState('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
   // View switching: 'feed' (用户视频页) | 'admin' (管理员监控台) | 'profile' (用户主页)
   const [currentView, setCurrentView] = useState('feed');
+  const [navTab, setNavTab] = useState('recommend');
 
   // Video feed state
   const [videos, setVideos] = useState([]);
@@ -54,6 +55,16 @@ export default function App() {
   const [isVideoZoomed, setIsVideoZoomed] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [playbackProgress, setPlaybackProgress] = useState({ currentTime: 0, duration: 0 });
+  const [followMap, setFollowMap] = useState({});
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchTimerRef = useRef(null);
+  const [friends, setFriends] = useState([]);
+  const [isLoadingFriends, setIsLoadingFriends] = useState(false);
+  const [followingUsers, setFollowingUsers] = useState([]);
+  const [isLoadingFollowing, setIsLoadingFollowing] = useState(false);
+  const [selectedFollowingUser, setSelectedFollowingUser] = useState(null);
 
   // Modals & Drawers state
   const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -126,6 +137,10 @@ export default function App() {
   const loadingMoreFeedRef = useRef(false);
   const preloadedMediaRef = useRef([]);
 
+  const [searchPage, setSearchPage] = useState(false);
+  const [searchPageQuery, setSearchPageQuery] = useState('');
+  const [searchPageResults, setSearchPageResults] = useState(null);
+  const [isSearchPageLoading, setIsSearchPageLoading] = useState(false);
 
   useEffect(() => {
     const el = videoStageRef.current;
@@ -134,7 +149,6 @@ export default function App() {
     return () => el.removeEventListener('wheel', handleWheel);
   }, [currentIndex, videos.length, allViewed, feedPagination, isLoadingMoreFeed]);
 
-  // --- AUTOMATIC INITIALIZATION ---
   useEffect(() => {
     if (token) {
       localStorage.setItem('token', token);
@@ -144,6 +158,7 @@ export default function App() {
       localStorage.removeItem('user');
       setVideos([]);
       setCurrentView('feed');
+      setNavTab('recommend');
     }
   }, [token, user]);
 
@@ -153,7 +168,6 @@ export default function App() {
     }
   }, [token]);
 
-  // Background polling for admin dashboard (ADMIN only, and only when on admin view)
   useEffect(() => {
     let intervalId;
     if (token && user?.role === 'ADMIN' && currentView === 'admin') {
@@ -167,7 +181,6 @@ export default function App() {
     };
   }, [token, user?.role, currentView]);
 
-  // Poll like notification unread count when logged in (F14)
   useEffect(() => {
     let intervalId;
     if (token) {
@@ -184,7 +197,6 @@ export default function App() {
     };
   }, [token]);
 
-  // Handle Play/Pause when switching active video index
   useEffect(() => {
     if (currentView !== 'feed') {
       if (videoRef.current) videoRef.current.pause();
@@ -195,7 +207,6 @@ export default function App() {
       setIsPlaying(false);
       videoRef.current.load();
       videoRef.current.muted = isMuted;
-
       const playPromise = videoRef.current.play();
       if (playPromise !== undefined) {
         playPromise
@@ -222,7 +233,6 @@ export default function App() {
     }
   }, [playbackRate, currentIndex, videos]);
 
-  // Keyboard navigation: ArrowUp / ArrowDown to switch videos (F03)
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (!token || currentView !== 'feed' || videos.length === 0 || allViewed) return;
@@ -238,7 +248,45 @@ export default function App() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [token, videos.length, allViewed, currentIndex, currentView, feedPagination, isLoadingMoreFeed]);
 
-  // --- HELPER UTILITIES ---
+  useEffect(() => {
+    if (navTab === 'friends' && token) {
+      // 切换到朋友页：清空视频，加载朋友列表
+      setVideos([]);
+      setSelectedFollowingUser(null);
+      fetchFriends();
+    } else if (navTab === 'following' && token) {
+      // 切换到关注页：清空视频，清空选中的用户，加载关注列表
+      setVideos([]);
+      setSelectedFollowingUser(null);
+      fetchFollowing();
+    } else if (navTab === 'recommend' && token) {
+      // 切换到推荐页：清空视频，重新加载推荐
+      setVideos([]);
+      setCurrentIndex(0);
+      setAllViewed(false);
+      setFeedPagination({ nextCursor: null, hasMore: false });
+      fetchRecommendations();
+    }
+  }, [navTab, token]);
+
+  useEffect(() => {
+    const vid = videos[currentIndex];
+    if (!vid || !vid.user_id || vid.user_id === user?.id) return;
+    if (followMap[vid.user_id] === undefined) fetchRelation(vid.user_id);
+  }, [currentIndex, videos]);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+
+      const searchWrap = document.querySelector('.header-search-wrap');
+      if (searchWrap && !searchWrap.contains(e.target) && !searchPage) {
+        setSearchResults(null);
+      }
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [searchPage]);
+
   const showToast = (message, isError = false) => {
     setToast({ message, isError });
     setTimeout(() => setToast(null), 4000);
@@ -246,9 +294,7 @@ export default function App() {
 
   const normalizeFeedVideo = (video) => {
     if (!video) return video;
-    const liked = typeof video.liked === 'boolean'
-        ? video.liked
-        : (video.is_liked === 1 || video.is_liked === true);
+    const liked = typeof video.liked === 'boolean' ? video.liked : (video.is_liked === 1 || video.is_liked === true);
     const likeCount = video.likeCount ?? video.likes_count ?? video.likesCount ?? 0;
     const commentCount = video.commentCount ?? video.comments_count ?? 0;
     return {
@@ -309,18 +355,15 @@ export default function App() {
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
-
     if (!(fetchOptions.body instanceof FormData) && !headers['Content-Type']) {
       headers['Content-Type'] = 'application/json';
     }
-
     try {
       const response = await fetch(`${API_BASE}${endpoint}`, {
         ...fetchOptions,
         headers,
         signal: controller.signal
       });
-
       if (response.status === 401) {
         setToken('');
         setUser(null);
@@ -328,7 +371,6 @@ export default function App() {
         showToast('登录会话已过期，请重新登录', true);
         return null;
       }
-
       const text = await response.text();
       return text ? JSON.parse(text) : {};
     } catch (err) {
@@ -366,20 +408,17 @@ export default function App() {
     return null;
   };
 
-  // --- API SERVICE CALLS ---
   const handleAuth = async (e) => {
     e.preventDefault();
     if (!username.trim() || !password.trim()) {
       showToast('请填写完整用户名和密码！', true);
       return;
     }
-
     const endpoint = authMode === 'register' ? `${API_PREFIX}/auth/register` : `${API_PREFIX}/auth/login`;
     const data = await apiFetch(endpoint, {
       method: 'POST',
       body: JSON.stringify({ username, password })
     });
-
     if (data) {
       if (data.success) {
         setToken(data.token);
@@ -397,7 +436,6 @@ export default function App() {
     if (!window.confirm("⚠️ 确定要彻底注销账户吗？这将会删除您所有的发布视频且不可恢复！")) {
       return;
     }
-
     const data = await apiFetch(`${API_PREFIX}/users/me`, { method: 'DELETE' });
     if (data && data.success) {
       setToken('');
@@ -423,7 +461,6 @@ export default function App() {
     } else {
       setIsLoadingFeed(false);
     }
-
     if (data && data.success) {
       const fetchedVideos = (data.videos || []).map(normalizeFeedVideo);
       setVideos(prev => append ? [...prev, ...fetchedVideos] : fetchedVideos);
@@ -454,15 +491,10 @@ export default function App() {
     if (likingVideoId === videoId) {
       return;
     }
-
     setLikingVideoId(videoId);
     const data = await apiFetch(`${API_PREFIX}/videos/${videoId}/like`, { method: 'PUT' });
     setLikingVideoId(null);
-
-    if (!data) {
-      return;
-    }
-
+    if (!data) return;
     if (data.success) {
       const liked = Boolean(data.liked);
       const likeCount = data.likeCount ?? data.likes_count ?? 0;
@@ -492,7 +524,6 @@ export default function App() {
     if (statsData && statsData.success) {
       setDevStats(statsData.stats);
     }
-
     const logsData = await apiFetch(`${API_PREFIX}/admin/request-logs`, { silent: true, timeoutMs: 15000 });
     if (logsData && logsData.success) {
       setDevLogs(logsData.logs || []);
@@ -512,7 +543,6 @@ export default function App() {
     }
   };
 
-  // Fetch liked videos (cursor paginated)
   const fetchLikedVideos = async (cursor = null, append = false) => {
     const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
     const data = await apiFetch(`${API_PREFIX}/users/me/liked-videos?limit=8${cursorParam}`);
@@ -526,7 +556,6 @@ export default function App() {
     }
   };
 
-  // Search users for share modal
   const searchUsers = async (query) => {
     if (!query.trim()) {
       setUserSearchResults([]);
@@ -540,7 +569,6 @@ export default function App() {
     }
   };
 
-  // Share video to another user
   const shareVideoToUser = async (toUserId) => {
     setIsSharing(true);
     const data = await apiFetch(`${API_PREFIX}/videos/${shareTargetVideoId}/share`, {
@@ -559,7 +587,6 @@ export default function App() {
     }
   };
 
-  // Fetch videos shared with me
   const fetchSharedVideos = async (cursor = null, append = false) => {
     const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
     const data = await apiFetch(`${API_PREFIX}/users/me/shared-videos?limit=8${cursorParam}`);
@@ -736,33 +763,122 @@ export default function App() {
     });
   };
 
+  const fetchRelation = async (targetUserId) => {
+    const data = await apiFetch(`${API_PREFIX}/users/${targetUserId}/relation`, { silent: true });
+    if (data && data.success) {
+      setFollowMap(prev => ({ ...prev, [targetUserId]: { isFollowing: data.isFollowing, isFriend: data.isFriend } }));
+    }
+  };
+
+  const handleFollowToggle = async (targetUserId, e) => {
+    e?.stopPropagation();
+    if (!token) { showToast('请先登录', true); return; }
+    if (targetUserId === user?.id) return;
+    const isFollowing = followMap[targetUserId]?.isFollowing;
+    const data = await apiFetch(`${API_PREFIX}/users/${targetUserId}/follow`, { method: isFollowing ? 'DELETE' : 'POST' });
+    if (data && data.success) {
+      showToast(data.message);
+      setFollowMap(prev => ({ ...prev, [targetUserId]: { isFollowing: !isFollowing, isFriend: data.isFriend ?? false } }));
+      if (navTab === 'friends') fetchFriends();
+      if (navTab === 'following') fetchFollowing();
+    } else if (data) showToast(data.message, true);
+  };
+
+  const handleSearchChange = (e) => {
+    const q = e.target.value;
+    setSearchQuery(q);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (!q.trim()) { setSearchResults(null); return; }
+    searchTimerRef.current = setTimeout(async () => {
+      setIsSearching(true);
+      const data = await apiFetch(`${API_PREFIX}/videos/search?q=${encodeURIComponent(q.trim())}`);
+      setIsSearching(false);
+      if (data && data.success) setSearchResults(data);
+    }, 400);
+  };
+
+  const clearSearch = () => { setSearchQuery(''); setSearchResults(null); };
+
+  const playSearchVideo = (video) => {
+    exitSearchPage();
+    setSearchResults(null);
+    setSearchQuery('');
+    clearSearch();
+    setVideos([normalizeFeedVideo(video)]);
+    setCurrentIndex(0);
+    setAllViewed(false);
+    setCurrentView('feed');
+  };
+
+  const fetchFriends = async () => {
+    setIsLoadingFriends(true);
+    const data = await apiFetch(`${API_PREFIX}/users/me/friends`);
+    setIsLoadingFriends(false);
+    if (data && data.success) setFriends(data.friends || []);
+  };
+
+  const fetchFollowing = async () => {
+    setIsLoadingFollowing(true);
+    const data = await apiFetch(`${API_PREFIX}/users/me/following`);
+    setIsLoadingFollowing(false);
+    if (data && data.success) setFollowingUsers(data.users || []);
+  };
+
+  const fetchUserVideos = async (targetUser) => {
+    setSelectedFollowingUser(targetUser);
+    setIsLoadingFeed(true);
+
+    const data = await apiFetch(`${API_PREFIX}/users/${targetUser.id}/videos`);
+
+    // 调试日志
+    console.log('=== fetchUserVideos 调试 ===');
+    console.log('targetUser:', targetUser);
+    console.log('响应数据:', data);
+    console.log('data.success:', data?.success);
+    console.log('data.videos:', data?.videos);
+
+    setIsLoadingFeed(false);
+
+    if (data && data.success) {
+      const fetchedVideos = (data.videos || []).map(normalizeFeedVideo);
+      console.log('处理后的视频数量:', fetchedVideos.length);
+
+      setVideos(fetchedVideos);
+      setCurrentIndex(0);
+      setAllViewed(false);
+      setFeedPagination({ nextCursor: null, hasMore: false });
+
+      if (fetchedVideos.length === 0) {
+        showToast(`@${targetUser.username} 还没有发布任何视频`, false);
+      }
+    } else {
+      console.error('获取用户视频失败:', data);
+      showToast('加载失败，请稍后重试', true);
+      setVideos([]);
+    }
+  };
+
   const extractVideoFirstFrame = (videoFile) => {
     return new Promise((resolve, reject) => {
       const video = document.createElement('video');
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       const url = URL.createObjectURL(videoFile);
-
-      // Timeout after 15s to avoid hanging forever
       const timeout = setTimeout(() => {
         URL.revokeObjectURL(url);
         reject(new Error('Frame extraction timed out'));
       }, 15000);
-
       video.preload = 'metadata';
       video.muted = true;
       video.playsInline = true;
       video.crossOrigin = 'anonymous';
-
       video.onloadedmetadata = () => {
-        // Seek to 0.1s to skip possible black initial frame
         if (video.duration > 0.1) {
           video.currentTime = 0.1;
         } else {
           video.currentTime = 0;
         }
       };
-
       video.onseeked = () => {
         clearTimeout(timeout);
         canvas.width = video.videoWidth;
@@ -777,14 +893,11 @@ export default function App() {
           }
         }, 'image/jpeg', 0.9);
       };
-
       video.onerror = () => {
         clearTimeout(timeout);
         URL.revokeObjectURL(url);
         reject(new Error('Failed to load video for frame extraction'));
       };
-
-      // Start loading — must be after event handlers
       video.src = url;
     });
   };
@@ -799,11 +912,8 @@ export default function App() {
       showToast('请选择要上传的视频文件！', true);
       return;
     }
-
     setIsUploading(true);
     setUploadProgress(5);
-
-    // Auto-extract first frame as cover if no cover selected
     let coverToUpload = uploadCover;
     if (!coverToUpload && uploadVideo) {
       setUploadStatusMsg('正在提取视频首帧作为封面...');
@@ -814,10 +924,8 @@ export default function App() {
         console.warn('Auto cover extraction failed, using fallback:', err);
       }
     }
-
     setUploadStatusMsg('视频上传切片并写入数据库中...');
     setUploadProgress(10);
-
     const formData = new FormData();
     formData.append('title', uploadTitle);
     formData.append('description', uploadDesc);
@@ -825,7 +933,6 @@ export default function App() {
     if (coverToUpload) {
       formData.append('cover', coverToUpload);
     }
-
     const progressInterval = setInterval(() => {
       setUploadProgress(prev => {
         if (prev >= 90) {
@@ -835,20 +942,16 @@ export default function App() {
         return prev + 15;
       });
     }, 200);
-
     const data = await apiFetch(`${API_PREFIX}/videos`, {
       method: 'POST',
       body: formData
     });
-
     clearInterval(progressInterval);
     setUploadProgress(100);
-
     setTimeout(() => {
       setIsUploading(false);
       setUploadProgress(0);
       setUploadStatusMsg('');
-
       if (data && data.success) {
         showToast('🎉 视频发布成功！已加入算法推荐池！');
         setIsUploadOpen(false);
@@ -856,7 +959,6 @@ export default function App() {
         setUploadDesc('');
         setUploadVideo(null);
         setUploadCover(null);
-
         fetchRecommendations();
         if (user?.role === 'ADMIN' && currentView === 'admin') {
           fetchDevDashboardData();
@@ -907,10 +1009,8 @@ export default function App() {
     setCurrentView('feed');
   };
 
-  // --- ACTIONS INTERFACE ---
   const togglePlayState = () => {
     if (!videoRef.current) return;
-
     if (isPlaying) {
       videoRef.current.pause();
       setIsPlaying(false);
@@ -918,7 +1018,6 @@ export default function App() {
       videoRef.current.play();
       setIsPlaying(true);
     }
-
     setPlayTriggerAnim(true);
     setTimeout(() => setPlayTriggerAnim(false), 500);
   };
@@ -952,7 +1051,6 @@ export default function App() {
     if (!videoRef.current) return;
     const duration = Number.isFinite(videoRef.current.duration) ? videoRef.current.duration : 0;
     if (duration <= 0) return;
-
     const rect = e.currentTarget.getBoundingClientRect();
     const ratio = Math.min(Math.max((e.clientX - rect.left) / rect.width, 0), 1);
     videoRef.current.currentTime = duration * ratio;
@@ -981,8 +1079,6 @@ export default function App() {
     if (remainingVideos <= FEED_PREFETCH_THRESHOLD) {
       loadMoreFeed();
     }
-    // loadMoreFeed closes over the latest cursor state listed below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, currentView, currentIndex, videos.length, allViewed, feedPagination.nextCursor, feedPagination.hasMore]);
 
   useEffect(() => {
@@ -990,7 +1086,6 @@ export default function App() {
       preloadedMediaRef.current = [];
       return;
     }
-
     preloadedMediaRef.current = videos
         .slice(currentIndex + 1, currentIndex + 1 + MEDIA_PRELOAD_AHEAD)
         .map(video => {
@@ -1057,7 +1152,6 @@ export default function App() {
   const handleWheel = (e) => {
     e.preventDefault();
     if (scrollLockRef.current) return;
-
     if (e.deltaY > 30) {
       if (currentIndex < videos.length - 1) {
         lockScrollTransition();
@@ -1105,7 +1199,6 @@ export default function App() {
     }
   };
 
-  // --- RENDERING SCREENS ---
   if (isCheckingSession && token) {
     return (
         <div className="auth-wrapper">
@@ -1130,65 +1223,57 @@ export default function App() {
               <h2>抖音短视频架构平台</h2>
               <p>{authMode === 'login' ? '智能算法推荐与实时开发监控' : '创建开发者账户'}</p>
             </div>
-
             <form className="auth-form" onSubmit={handleAuth}>
               <div className="input-group">
                 <label>用户名</label>
-                <input
-                    type="text"
-                    placeholder="输入用户名"
-                    value={username}
-                    onChange={e => setUsername(e.target.value)}
-                    required
-                />
+                <input type="text" placeholder="输入用户名" value={username} onChange={e => setUsername(e.target.value)} required />
               </div>
               <div className="input-group">
                 <label>密码</label>
-                <input
-                    type="password"
-                    placeholder="输入密码"
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    required
-                />
+                <input type="password" placeholder="输入密码" value={password} onChange={e => setPassword(e.target.value)} required />
               </div>
-
-              <button type="submit" className="auth-btn">
-                {authMode === 'login' ? '开启平台' : '立即注册'}
-              </button>
+              <button type="submit" className="auth-btn">{authMode === 'login' ? '开启平台' : '立即注册'}</button>
             </form>
-
             <div className="auth-switch">
-              {authMode === 'login' ? (
-                  <>
-                    没有账户？ <span onClick={() => setAuthMode('register')}>立即注册</span>
-                  </>
-              ) : (
-                  <>
-                    已有账户？ <span onClick={() => setAuthMode('login')}>直接登录</span>
-                  </>
-              )}
+              {authMode === 'login' ? <>没有账户？ <span onClick={() => setAuthMode('register')}>立即注册</span></> : <>已有账户？ <span onClick={() => setAuthMode('login')}>直接登录</span></>}
             </div>
           </div>
-
-          {toast && (
-              <div className={`toast ${toast.isError ? 'error' : ''}`}>
-                <span>{toast.message}</span>
-              </div>
-          )}
+          {toast && <div className={`toast ${toast.isError ? 'error' : ''}`}><span>{toast.message}</span></div>}
         </div>
     );
   }
 
   const activeVideo = videos[currentIndex];
   const isAdmin = user?.role === 'ADMIN';
-  const progressPercent = playbackProgress.duration > 0
-      ? (playbackProgress.currentTime / playbackProgress.duration) * 100
-      : 0;
+  const progressPercent = playbackProgress.duration > 0 ? (playbackProgress.currentTime / playbackProgress.duration) * 100 : 0;
+
+  const fs = activeVideo?.user_id ? followMap[activeVideo.user_id] : null;
+  const isFollowingCreator = fs?.isFollowing ?? false;
+  const isFriendWithCreator = fs?.isFriend ?? false;
+
+  const doSearch = async (q) => {
+    if (!q.trim()) return;
+    setSearchPageQuery(q);
+    setSearchPage(true);
+    setSearchResults(null);
+    setIsSearchPageLoading(true);
+    setSearchQuery(q);
+    const data = await apiFetch(`${API_PREFIX}/videos/search?q=${encodeURIComponent(q.trim())}`);
+    setIsSearchPageLoading(false);
+    if (data && data.success) setSearchPageResults(data);
+  };
+
+  const exitSearchPage = () => {
+    setSearchPage(false);
+    setSearchPageResults(null);
+    setSearchQuery('');
+    setSearchResults(null);
+    setSearchPageQuery('');
+    setSearchQuery('');
+  };
 
   return (
       <div className="webapp-container">
-        {/* --- TOP NAVIGATION BAR --- */}
         <header className="webapp-header">
           <div className="logo-area">
             <div className="mini-logo">
@@ -1199,589 +1284,750 @@ export default function App() {
             <h1>抖音短视频</h1>
           </div>
 
-          {/* View switcher: only visible to ADMIN */}
-          {isAdmin && (
-              <nav className="view-switcher">
-                <button
-                    className={`view-tab ${currentView === 'feed' ? 'active' : ''}`}
-                    onClick={() => setCurrentView('feed')}
-                >
-                  🎬 视频
-                </button>
-                <button
-                    className={`view-tab ${currentView === 'admin' ? 'active' : ''}`}
-                    onClick={() => setCurrentView('admin')}
-                >
-                  📊 监控台
-                </button>
-              </nav>
-          )}
-
-          <div className="user-profile-widget">
-            <div className="user-info">
-              <div className="username">UID: {user?.id} • {user?.username}</div>
-              <div className="role">
-                {isAdmin ? '🔧 系统管理员' : '👤 普通用户'}
-              </div>
+          <div className="header-search-wrap">
+            <div className="header-search-box">
+              <svg className="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+              <input
+                  type="text"
+                  className="header-search-input"
+                  placeholder="搜索视频、用户..."
+                  value={searchQuery}
+                  onChange={handleSearchChange}
+                  onKeyDown={(e) => { if (e.key === 'Enter') doSearch(searchQuery); }}
+              />
+              {searchQuery && <button className="search-clear-btn" onClick={clearSearch}>✕</button>}
+              <button className="search-submit-btn" onClick={() => doSearch(searchQuery)}>搜索</button>
             </div>
-            <button className="logout-btn danger" onClick={handleDeleteAccount}>
-              注销账户
-            </button>
-            <button className="logout-btn" onClick={() => { setToken(''); setUser(null); }}>
-              <svg style={{ width: 14, height: 14, fill: 'currentColor' }} viewBox="0 0 24 24">
-                <path d="M16 13v-2H7V9l-5 4 5 4v-2h9zM20 3h-9c-1.1 0-2 .9-2 2v4h2V5h9v14h-9v-4H9v4c0 1.1.9 2 2 2h9c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" />
-              </svg>
-              安全退出
-            </button>
-          </div>
-        </header>
-
-        {/* ============================================== */}
-        {/* VIEW 1: FULLSCREEN VIDEO FEED (抖音网页版风格)   */}
-        {/* ============================================== */}
-        {currentView === 'feed' && (
-            <main className="web-feed-main">
-              {isLoadingFeed ? (
-                  <div className="web-feed-center">
-                    <div className="loading-spinner" />
-                    <p>算法组装中...</p>
-                  </div>
-              ) : allViewed ? (
-                  <div className="web-feed-center">
-                    <div className="empty-icon-glow">
-                      <svg viewBox="0 0 24 24">
-                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
-                      </svg>
-                    </div>
-                    <h3>推荐已看完</h3>
-                    <p>推荐算法通过您的"已看日志"识别了用户喜好，所有库里的视频已经过滤完毕。</p>
-                    <button className="reset-views-btn" onClick={handleResetViews}>
-                      🔄 重置浏览历史以重新排序
-                    </button>
-                  </div>
-              ) : videos.length > 0 && activeVideo ? (
-                  <div
-                      className="web-video-stage"
-                      ref={videoStageRef}
-                      onTouchStart={handleTouchStart}
-                      onTouchEnd={handleTouchEnd}
-                  >
-                    {/* 模糊背景 */}
-                    <div
-                        className="web-video-bg"
-                        style={{
-                          backgroundImage: `url(${getMediaUrl(activeVideo.cover_url)})`,
-                          backgroundSize: 'cover',
-                          backgroundPosition: 'center',
-                          filter: 'blur(40px) brightness(0.4) saturate(1.5)',
-                          transform: 'scale(1.1)',
-                        }}
-                    />
-
-                    {/* Center video player */}
-                    <div className={`web-video-wrapper ${isVideoZoomed ? 'is-zoomed' : ''}`} onClick={togglePlayState}>
-                      <video
-                          ref={videoRef}
-                          className={`web-video-player ${isVideoZoomed ? 'is-zoomed' : ''}`}
-                          loop
-                          muted={isMuted}
-                          preload="metadata"
-                          playsInline
-                          src={getMediaUrl(activeVideo.video_url)}
-                          poster={activeVideo.cover_url ? getMediaUrl(activeVideo.cover_url) : undefined}
-                          onTimeUpdate={handleVideoTimeUpdate}
-                          onLoadedMetadata={handleVideoLoadedMetadata}
-                      />
-
-                      {/* Play/Pause animation overlay */}
-                      <div className="video-play-overlay">
-                        {playTriggerAnim && (
-                            <div className="play-pause-icon-anim">
-                              {isPlaying ? (
-                                  <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-                              ) : (
-                                  <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>
-                              )}
+            {(searchResults || isSearching) && !searchPage && (
+                <div className="search-dropdown">
+                  {isSearching ? (
+                      <div className="search-loading"><div className="loading-spinner" style={{ width: 24, height: 24, margin: '16px auto' }} /></div>
+                  ) : searchResults ? (
+                      <>
+                        {searchResults.users?.length > 0 && (
+                            <div className="search-section">
+                              <div className="search-section-title">用户</div>
+                              {searchResults.users.map(u => (
+                                  <div
+                                      key={u.id}
+                                      className="search-result-item clickable-profile"
+                                      onClick={() => { clearSearch(); openUserProfile(u.id); }}
+                                      style={{ cursor: 'pointer' }}
+                                  >
+                                    <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${u.username}`} alt="" className="search-avatar" />
+                                    <div className="search-item-info">
+                                      <div className="search-item-name">@{u.username}</div>
+                                      {u.displayName && <div className="search-item-sub">{u.displayName}</div>}
+                                    </div>
+                                  </div>
+                              ))}
                             </div>
                         )}
-                      </div>
-
-                      {/* Mute toggle */}
-                      <button className="web-mute-button" onClick={toggleMuted} title={isMuted ? '打开声音' : '静音'}>
-                        {isMuted ? (
-                            <svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.62 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73L16.25 17.52c-.67.52-1.43.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
-                        ) : (
-                            <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
-                        )}
-                      </button>
-
-                      <button
-                          className="web-zoom-button"
-                          onClick={toggleVideoZoom}
-                          title={isVideoZoomed ? '还原视频大小' : '放大视频'}
-                      >
-                        {isVideoZoomed ? (
-                            <svg viewBox="0 0 24 24"><path d="M5 14h2v3h3v2H5v-5zm12 3v-3h2v5h-5v-2h3zM7 7v3H5V5h5v2H7zm12 3h-2V7h-3V5h5v5z"/></svg>
-                        ) : (
-                            <svg viewBox="0 0 24 24"><path d="M15 3h6v6h-2V6.41l-4.29 4.3-1.42-1.42 4.3-4.29H15V3zM9 21H3v-6h2v2.59l4.29-4.3 1.42 1.42-4.3 4.29H9V21zm12 0h-6v-2h2.59l-4.3-4.29 1.42-1.42 4.29 4.3V15h2v6zM3 9V3h6v2H6.41l4.3 4.29-1.42 1.42-4.29-4.3V9H3z"/></svg>
-                        )}
-                      </button>
-
-                      {/* Bottom video meta */}
-                      <div className="web-video-meta">
-                        <div
-                            className="creator-handle clickable-profile"
-                            onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
-                            title="进入作者主页"
-                        >
-                          @{activeVideo.creator_name || '未知创作者'}
-                          {activeVideo.user_id === user?.id && <span className="my-publish-badge">我的发布</span>}
-                        </div>
-                        <div className="video-caption">
-                          {activeVideo.title} {activeVideo.description && `— ${activeVideo.description}`}
-                        </div>
-                        <div className="video-hashtags">#智能算法推荐 #SpringBoot #React</div>
-                      </div>
-
-                      <div className="web-video-controls" onClick={(e) => e.stopPropagation()}>
-                        <div className="web-video-progress-track" onClick={handleSeekVideo}>
-                          <div className="web-video-progress-fill" style={{ width: `${progressPercent}%` }} />
-                        </div>
-                        <div className="web-video-controls-row">
-                          <span className="web-video-time">
-                            {formatVideoTime(playbackProgress.currentTime)} / {formatVideoTime(playbackProgress.duration)}
-                          </span>
-                          <label className="web-video-speed">
-                            <span>倍速</span>
-                            <select value={playbackRate} onChange={handlePlaybackRateChange}>
-                              {PLAYBACK_SPEED_OPTIONS.map((rate) => (
-                                  <option key={rate} value={rate}>{rate}x</option>
+                        {searchResults.videos?.length > 0 && (
+                            <div className="search-section">
+                              <div className="search-section-title">视频</div>
+                              {searchResults.videos.map(v => (
+                                  <div key={v.id} className="search-result-item" onClick={() => playSearchVideo(v)}>
+                                    <img src={getMediaUrl(v.cover_url)} alt="" className="search-video-thumb" />
+                                    <div className="search-item-info">
+                                      <div className="search-item-name">{v.title}</div>
+                                      <div className="search-item-sub">@{v.creator_name} · {v.likeCount ?? 0} 赞</div>
+                                    </div>
+                                  </div>
                               ))}
-                            </select>
-                          </label>
-                        </div>
-                      </div>
-                    </div>
+                            </div>
+                        )}
+                        {!searchResults.users?.length && !searchResults.videos?.length && <div className="search-empty">未找到相关内容</div>}
+                      </>
+                  ) : null}
+                </div>
+            )}
+          </div>
 
-                    {/* Right floating action bar */}
-                    <div className="web-action-bar">
-                      <div
-                          className="sidebar-avatar-wrapper clickable-profile"
-                          onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
-                          title="进入作者主页"
-                      >
-                        <div className="sidebar-avatar">
-                          <img
-                              src={getAvatarUrl(activeVideo.creator_name)}
-                              alt="avatar"
-                          />
-                        </div>
-                        <div className="sidebar-follow-badge" title="关注作者">
-                          <svg viewBox="0 0 24 24">
-                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-                          </svg>
-                        </div>
-                      </div>
-
-                      {/* Like button */}
-                      <button
-                          className={`action-item-button ${activeVideo.liked ? 'liked' : ''} ${likingVideoId === activeVideo.id ? 'is-loading' : ''}`}
-                          onClick={(e) => handleToggleLike(activeVideo.id, e)}
-                          disabled={likingVideoId === activeVideo.id}
-                          aria-pressed={activeVideo.liked}
-                          title={activeVideo.liked ? '取消点赞' : '点赞'}
-                      >
-                        <div className="action-icon-circle">
-                          <svg viewBox="0 0 24 24">
-                            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                          </svg>
-                        </div>
-                        <span className="action-count">{activeVideo.likeCount ?? 0}</span>
-                      </button>
-
-                      {/* Comment button */}
-                      <button
-                          className="action-item-button special-action"
-                          onClick={(e) => { e.stopPropagation(); openCommentsPanel(activeVideo.id); }}
-                          title="查看评论"
-                      >
-                        <div className="action-icon-circle">
-                          <svg viewBox="0 0 24 24">
-                            <path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z" />
-                          </svg>
-                        </div>
-                        <span className="action-count">{activeVideo.commentCount ?? activeVideo.comments_count ?? 0}</span>
-                      </button>
-
-                      {/* Share button */}
-                      <button
-                          className="action-item-button special-action"
-                          onClick={(e) => { e.stopPropagation(); openSharePanel(activeVideo.id); }}
-                          title="转发给好友"
-                      >
-                        <div className="action-icon-circle">
-                          <svg viewBox="0 0 24 24">
-                            <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
-                          </svg>
-                        </div>
-                        <span className="action-count">转发</span>
-                      </button>
-
-                      {/* Reset views */}
-                      <button className="action-item-button special-action" onClick={handleResetViews} title="重置观看日志">
-                        <div className="action-icon-circle">
-                          <svg viewBox="0 0 24 24">
-                            <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
-                          </svg>
-                        </div>
-                        <span className="action-count">重置已看</span>
-                      </button>
-
-                      {/* Publish */}
-                      <button className="action-item-button special-action" onClick={() => setIsUploadOpen(true)} title="发布我的新视频">
-                        <div className="action-icon-circle publish-icon">
-                          <svg viewBox="0 0 24 24">
-                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-                          </svg>
-                        </div>
-                        <span className="action-count publish-label">发视频</span>
-                      </button>
-
-                      {/* Like notifications (F14) */}
-                      <button
-                          className="action-item-button special-action like-notification-trigger"
-                          onClick={openLikeNotificationsPanel}
-                          title="谁赞了我的视频"
-                      >
-                        <div className="action-icon-circle">
-                          <svg viewBox="0 0 24 24">
-                            <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z" />
-                          </svg>
-                          {likeNotificationUnreadCount > 0 && (
-                              <span className="notification-badge">
-                                {likeNotificationUnreadCount > 99 ? '99+' : likeNotificationUnreadCount}
-                              </span>
-                          )}
-                        </div>
-                        <span className="action-count">点赞通知</span>
-                      </button>
-
-                      {/* My videos */}
-                      <button className="action-item-button special-action" onClick={openMyVideosPanel} title="管理我的视频">
-                        <div className="action-icon-circle">
-                          <svg viewBox="0 0 24 24">
-                            <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z" />
-                          </svg>
-                        </div>
-                        <span className="action-count">我的作品</span>
-                      </button>
-
-                      {/* Liked videos */}
-                      <button className="action-item-button special-action" onClick={openLikedVideosPanel} title="查看我点赞的视频">
-                        <div className="action-icon-circle">
-                          <svg viewBox="0 0 24 24">
-                            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                          </svg>
-                        </div>
-                        <span className="action-count">我的喜欢</span>
-                      </button>
-
-                      {/* Shared with me */}
-                      <button className="action-item-button special-action" onClick={openSharedVideosPanel} title="好友分享给我的视频">
-                        <div className="action-icon-circle">
-                          <svg viewBox="0 0 24 24">
-                            <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
-                          </svg>
-                        </div>
-                        <span className="action-count">分享给我</span>
-                      </button>
-                    </div>
-
-                    {/* Prev/Next navigation arrows (far right, like douyin web) */}
-                    <div className="web-nav-arrows">
-                      <button
-                          className="arrow-nav-btn"
-                          onClick={handlePrevVideo}
-                          disabled={currentIndex === 0}
-                          title="上一个视频"
-                      >
-                        <svg style={{ width: 22, height: 22, fill: 'currentColor' }} viewBox="0 0 24 24">
-                          <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" />
-                        </svg>
-                      </button>
-                      <button
-                          className="arrow-nav-btn"
-                          onClick={handleNextVideo}
-                          disabled={currentIndex === videos.length - 1 && !feedPagination.hasMore}
-                          title="下一个视频"
-                      >
-                        <svg style={{ width: 22, height: 22, fill: 'currentColor' }} viewBox="0 0 24 24">
-                          <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" />
-                        </svg>
-                      </button>
-                    </div>
-
-                    {/* Progress indicator */}
-                    <div className="web-feed-progress">
-                      {currentIndex + 1} / {videos.length}{isLoadingMoreFeed ? ' · 加载中...' : ''}
-                    </div>
-                  </div>
-              ) : (
-                  <div className="web-feed-center">
-                    <h3>视频库空空如也</h3>
-                    <p>服务器数据库中没有任何可推荐视频。</p>
-                    <button className="reset-views-btn" onClick={() => setIsUploadOpen(true)}>
-                      ➕ 发布全站首款视频
-                    </button>
-                  </div>
-              )}
-            </main>
-        )}
-
-        {/* ============================================== */}
-        {/* VIEW: USER PROFILE PAGE                         */}
-        {/* ============================================== */}
-        {currentView === 'profile' && (
-            <main className="user-profile-page">
-              <div className="profile-top-bar">
-                <button className="profile-back-btn" onClick={closeUserProfile} title="返回推荐">
-                  <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" /></svg>
-                  返回
+          <div className="header-right">
+            {isAdmin && (
+                <button className={`admin-tab-btn ${currentView === 'admin' ? 'active' : ''}`} onClick={() => setCurrentView(currentView === 'admin' ? 'feed' : 'admin')}>
+                  📊 监控台
                 </button>
+            )}
+            {token && (
+                <div className="header-quick-actions">
+                  <button className="header-quick-btn" onClick={() => setIsUploadOpen(true)} title="发布视频">
+                    <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                    <span>发视频</span>
+                  </button>
+                  <button className="header-quick-btn" onClick={handleResetViews} title="重置已看">
+                    <svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                    <span>重置已看</span>
+                  </button>
+                  <button className="header-quick-btn like-notification-trigger" onClick={openLikeNotificationsPanel} title="点赞通知">
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <svg viewBox="0 0 24 24"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z"/></svg>
+                      {likeNotificationUnreadCount > 0 && (
+                          <span className="header-notification-badge">
+            {likeNotificationUnreadCount > 99 ? '99+' : likeNotificationUnreadCount}
+          </span>
+                      )}
+                    </div>
+                    <span>点赞通知</span>
+                  </button>
+                </div>
+            )}
+            <div className="user-profile-widget">
+              <div className="user-info">
+                <div className="username">UID: {user?.id} • {user?.username}</div>
+                <div className="role">{isAdmin ? '🔧 系统管理员' : '👤 普通用户'}</div>
+              </div>
+              <button className="logout-btn danger" onClick={handleDeleteAccount}>注销账户</button>
+              <button className="logout-btn" onClick={() => { setToken(''); setUser(null); }}>
+                <svg style={{ width: 14, height: 14, fill: 'currentColor' }} viewBox="0 0 24 24"><path d="M16 13v-2H7V9l-5 4 5 4v-2h9zM20 3h-9c-1.1 0-2 .9-2 2v4h2V5h9v14h-9v-4H9v4c0 1.1.9 2 2 2h9c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" /></svg>
+                安全退出
+              </button>
+            </div>
+          </div>
+        </header>
+        {searchPage && (
+            <div className="search-page-overlay">
+              <div className="search-page-header">
+                <button className="search-page-back" onClick={exitSearchPage}>
+                  <svg style={{ width: 20, height: 20, fill: 'currentColor' }} viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                </button>
+                <span className="search-page-keyword">"{searchPageQuery}"</span>
+                <span className="search-page-count">
+        {searchPageResults ? `${(searchPageResults.videos?.length || 0) + (searchPageResults.users?.length || 0)} 个结果` : ''}
+      </span>
               </div>
 
-              {isLoadingProfile && !profileUser ? (
-                  <div className="profile-loading">
-                    <div className="loading-spinner" />
-                    <p>加载用户资料...</p>
-                  </div>
-              ) : profileUser ? (
-                  <>
-                    <div className="profile-header">
-                      <div className="profile-avatar-large">
-                        <img src={getAvatarUrl(profileUser)} alt={profileUser.username} />
-                      </div>
-                      <div className="profile-info">
-                        <h2>@{profileUser.username}</h2>
-                        <div className="profile-id">用户 ID：{profileUser.id}</div>
-                        {profileUser.displayName && (
-                            <div className="profile-display-name">{profileUser.displayName}</div>
-                        )}
-                        <div className="profile-stats">
-                          <span className="profile-stat-item">
-                            <strong>{profileUser.totalLikesReceived ?? 0}</strong> 获赞
-                          </span>
-                          <span className="profile-stat-item">
-                            <strong>{profileUser.publishedVideoCount ?? 0}</strong> 作品
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="profile-tabs">
-                      <button
-                          className={`profile-tab ${profileTab === 'published' ? 'active' : ''}`}
-                          onClick={() => switchProfileTab('published')}
-                      >
-                        发布的视频
-                      </button>
-                      <button
-                          className={`profile-tab ${profileTab === 'liked' ? 'active' : ''}`}
-                          onClick={() => switchProfileTab('liked')}
-                      >
-                        点赞的视频
-                      </button>
-                    </div>
-
-                    <div className="profile-videos-section">
-                      {profileVideos.length > 0 ? (
-                          <div className="my-videos-grid web-modal-grid profile-video-grid">
-                            {profileVideos.map((pv) => (
+              {isSearchPageLoading ? (
+                  <div style={{ textAlign: 'center', padding: 60 }}><div className="loading-spinner" style={{ margin: '0 auto' }} /></div>
+              ) : searchPageResults ? (
+                  <div className="search-page-content">
+                    {searchPageResults.users?.length > 0 && (
+                        <div className="search-page-section">
+                          <div className="search-page-section-title">用户</div>
+                          <div className="search-page-users">
+                            {searchPageResults.users.map(u => (
                                 <div
-                                    key={`profile-${profileTab}-${pv.id}`}
-                                    className="grid-video-card"
-                                    onClick={() => handlePlayProfileVideo(pv)}
+                                    key={u.id}
+                                    className="search-user-card clickable-profile"
+                                    onClick={() => { exitSearchPage(); openUserProfile(u.id); }}
+                                    style={{ cursor: 'pointer' }}
                                 >
-                                  <img
-                                      className="grid-video-cover"
-                                      src={getMediaUrl(pv.cover_url)}
-                                      alt={pv.title}
-                                  />
-                                  <div className="grid-video-info">
-                                    <svg viewBox="0 0 24 24">
-                                      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                                    </svg>
-                                    <span>{pv.likeCount ?? pv.likes_count ?? 0}</span>
+                                  <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${u.username}`} alt="" className="search-user-avatar" />
+                                  <div className="search-user-info">
+                                    <div className="search-user-name">@{u.username}</div>
+                                    {u.displayName && <div className="search-user-sub">{u.displayName}</div>}
                                   </div>
+                                  <button
+                                      className={`search-follow-btn ${followMap[u.id]?.isFollowing ? 'following' : ''}`}
+                                      onClick={(e) => { e.stopPropagation(); handleFollowToggle(u.id, e); }}
+                                  >
+                                    {followMap[u.id]?.isFollowing ? '已关注' : '+ 关注'}
+                                  </button>
                                 </div>
                             ))}
                           </div>
-                      ) : (
-                          <div className="profile-videos-empty">
-                            <p>{profileTab === 'published' ? '该用户还没有发布视频' : '该用户还没有点赞任何视频'}</p>
+                        </div>
+                    )}
+
+                    {searchPageResults.videos?.length > 0 && (
+                        <div className="search-page-section">
+                          <div className="search-page-section-title">视频</div>
+                          <div className="search-page-videos">
+                            {searchPageResults.videos.map(v => (
+                                <div key={v.id} className="search-video-card" onClick={() => { exitSearchPage(); setVideos([normalizeFeedVideo(v)]); setCurrentIndex(0); setAllViewed(false); setNavTab('recommend'); setCurrentView('feed'); }}>
+                                  <div className="search-video-thumb-wrap">
+                                    <img src={getMediaUrl(v.cover_url)} alt={v.title} className="search-video-thumb-img" />
+                                    <div className="search-video-likes">
+                                      <svg style={{ width: 12, height: 12, fill: '#fff' }} viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                                      {v.likeCount ?? 0}
+                                    </div>
+                                  </div>
+                                  <div className="search-video-title">{v.title}</div>
+                                  <div className="search-video-creator">@{v.creator_name}</div>
+                                </div>
+                            ))}
                           </div>
-                      )}
+                        </div>
+                    )}
 
-                      <div className="my-videos-pagination profile-pagination">
-                        <button onClick={() => fetchProfileVideos(profileTab, profileUserId)}>
-                          刷新
-                        </button>
-                        <span>{profileVideosPagination.hasMore ? '还有更多' : '已加载全部'}</span>
-                        <button
-                            disabled={!profileVideosPagination.hasMore}
-                            onClick={() => fetchProfileVideos(
-                                profileTab,
-                                profileUserId,
-                                profileVideosPagination.nextCursor,
-                                true
-                            )}
-                        >
-                          加载更多
-                        </button>
-                      </div>
-                    </div>
-                  </>
-              ) : (
-                  <div className="profile-loading">
-                    <p>用户不存在或无法加载</p>
-                    <button className="reset-views-btn" onClick={closeUserProfile}>返回推荐</button>
+                    {!searchPageResults.users?.length && !searchPageResults.videos?.length && (
+                        <div style={{ textAlign: 'center', padding: '80px 20px', color: 'var(--text-muted)' }}>
+                          <p>未找到与 "{searchPageQuery}" 相关的内容</p>
+                        </div>
+                    )}
                   </div>
-              )}
-            </main>
+              ) : null}
+            </div>
         )}
+        <div className="webapp-body">
+          <nav className="left-sidebar">
+            <button className={`sidebar-nav-item ${navTab === 'recommend' ? 'active' : ''}`} onClick={() => { setNavTab('recommend'); setCurrentView('feed'); }}>
+              <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+              <span>推荐</span>
+            </button>
+            <button className={`sidebar-nav-item ${navTab === 'following' ? 'active' : ''}`} onClick={() => { setNavTab('following'); setCurrentView('feed'); }}>
+              <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+              <span>关注</span>
+            </button>
+            <button className={`sidebar-nav-item ${navTab === 'friends' ? 'active' : ''}`} onClick={() => { setNavTab('friends'); setCurrentView('feed'); }}>
+              <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
+              <span>朋友</span>
+            </button>
+          </nav>
+          <div className="webapp-main">
 
-        {/* ============================================== */}
-        {/* VIEW 2: ADMIN MONITORING CONSOLE (仅管理员)      */}
-        {/* ============================================== */}
-        {currentView === 'admin' && isAdmin && (
-            <main className="admin-page-main">
-              <section className="dev-console-panel admin-fullpage">
+            {currentView === 'feed' && (
+                <>
+                  {/* 关注页：左侧用户列表 + 右侧视频 */}
+                  {navTab === 'following' && (
+                      <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+                        <div style={{ width: 260, flexShrink: 0, background: 'rgba(0,0,0,0.6)', borderRight: '1px solid rgba(255,255,255,0.08)', overflowY: 'auto', padding: '16px 0' }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.4)', padding: '0 16px 12px', textTransform: 'uppercase', letterSpacing: 1 }}>我关注的人</div>
+                          {isLoadingFollowing ? (
+                              <div style={{ textAlign: 'center', padding: 32 }}><div className="loading-spinner" style={{ width: 28, height: 28, margin: '0 auto' }} /></div>
+                          ) : followingUsers.length > 0 ? followingUsers.map(u => (
+                              <div key={u.id}
+                                   onClick={() => fetchUserVideos(u)}
+                                   style={{
+                                     display: 'flex', alignItems: 'center', gap: 12,
+                                     padding: '12px 16px', cursor: 'pointer',
+                                     background: selectedFollowingUser?.id === u.id ? 'rgba(186,230,253,0.12)' : 'transparent',
+                                     borderLeft: selectedFollowingUser?.id === u.id ? '3px solid var(--primary-cyan)' : '3px solid transparent',
+                                     transition: 'all 0.15s'
+                                   }}
+                              >
+                                <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${u.username}`} alt="" style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, border: selectedFollowingUser?.id === u.id ? '2px solid var(--primary-cyan)' : 'none' }} />
+                                <div style={{ minWidth: 0, flex: 1 }}>
+                                  <div style={{ fontSize: 14, fontWeight: 600, color: selectedFollowingUser?.id === u.id ? 'var(--primary-cyan)' : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{u.username}</div>
+                                  {u.displayName && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.displayName}</div>}
+                                  {u.isFriend ? (
+                                      <div style={{ fontSize: 10, color: 'var(--primary-pink)', marginTop: 2 }}>♥ 好友</div>
+                                  ) : (
+                                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>✓ 已关注</div>
+                                  )}
+                                </div>
+                              </div>
+                          )) : (
+                              <div style={{ padding: '32px 20px', fontSize: 13, color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>还没有关注任何人<br />去推荐页关注你喜欢的创作者吧</div>
+                          )}
+                        </div>
 
-                <div className="console-title-bar">
-                  <h2>
-                    <svg viewBox="0 0 24 24">
-                      <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-4 6h-4v2h4v2h-4v2h4v2H9V7h6v2z" />
-                    </svg>
-                    抖音 API 开发者监控面板
-                  </h2>
-                  <div className="live-badge">
-                    <span className="blink-dot" />
-                    Live Connected
-                  </div>
-                </div>
+                        <main className="web-feed-main" style={{ flex: 1 }}>
+                          {!selectedFollowingUser ? (
+                              <div className="web-feed-center">
+                                <div style={{ fontSize: 48, marginBottom: 16 }}>👈</div>
+                                <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)' }}>从左侧选择一个关注的人<br />查看他发布的视频</p>
+                              </div>
+                          ) : isLoadingFeed ? (
+                              <div className="web-feed-center"><div className="loading-spinner" /><p>加载中...</p></div>
+                          ) : videos.length > 0 && activeVideo ? (
+                              <div className="web-video-stage" ref={videoStageRef} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+                                <div className="web-video-bg" style={{ backgroundImage: `url(${getMediaUrl(activeVideo.cover_url)})`, backgroundSize: 'cover', backgroundPosition: 'center', filter: 'blur(40px) brightness(0.4) saturate(1.5)', transform: 'scale(1.1)' }} />
+                                <div className={`web-video-wrapper ${isVideoZoomed ? 'is-zoomed' : ''}`} onClick={togglePlayState}>
+                                  <video ref={videoRef} className={`web-video-player ${isVideoZoomed ? 'is-zoomed' : ''}`} loop muted={isMuted} preload="metadata" playsInline
+                                         src={getMediaUrl(activeVideo.video_url)} poster={activeVideo.cover_url ? getMediaUrl(activeVideo.cover_url) : undefined}
+                                         onTimeUpdate={handleVideoTimeUpdate} onLoadedMetadata={handleVideoLoadedMetadata} />
+                                  <div className="video-play-overlay">{playTriggerAnim && <div className="play-pause-icon-anim">{isPlaying ? <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg> : <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>}</div>}</div>
+                                  <button className="web-mute-button" onClick={toggleMuted}>{isMuted ? <svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.62 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73L16.25 17.52c-.67.52-1.43.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg> : <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>}</button>
+                                  <button className="web-zoom-button" onClick={toggleVideoZoom}>
+                                    {isVideoZoomed ? <svg viewBox="0 0 24 24"><path d="M5 14h2v3h3v2H5v-5zm12 3v-3h2v5h-5v-2h3zM7 7v3H5V5h5v2H7zm12 3h-2V7h-3V5h5v5z"/></svg> : <svg viewBox="0 0 24 24"><path d="M15 3h6v6h-2V6.41l-4.29 4.3-1.42-1.42 4.3-4.29H15V3zM9 21H3v-6h2v2.59l4.29-4.3 1.42 1.42-4.3 4.29H9V21zm12 0h-6v-2h2.59l-4.3-4.29 1.42-1.42 4.29 4.3V15h2v6zM3 9V3h6v2H6.41l4.3 4.29-1.42 1.42-4.29-4.3V9H3z"/></svg>}
+                                  </button>
+                                  <div className="web-video-meta">
+                                    <div
+                                        className="creator-handle clickable-profile"
+                                        onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
+                                        title="进入作者主页"
+                                    >
+                                      @{activeVideo.creator_name || '未知创作者'}
+                                      {activeVideo.user_id === user?.id && <span className="my-publish-badge">我的发布</span>}
+                                    </div>
+                                    <div className="video-caption">{activeVideo.title}{activeVideo.description && ` — ${activeVideo.description}`}</div>
+                                    <div className="video-hashtags">#智能算法推荐 #SpringBoot #React</div>
+                                  </div>
+                                  <div className="web-video-controls" onClick={(e) => e.stopPropagation()}>
+                                    <div className="web-video-progress-track" onClick={handleSeekVideo}><div className="web-video-progress-fill" style={{ width: `${progressPercent}%` }} /></div>
+                                    <div className="web-video-controls-row">
+                                      <span className="web-video-time">{formatVideoTime(playbackProgress.currentTime)} / {formatVideoTime(playbackProgress.duration)}</span>
+                                      <label className="web-video-speed"><span>倍速</span><select value={playbackRate} onChange={handlePlaybackRateChange}>{PLAYBACK_SPEED_OPTIONS.map(r => <option key={r} value={r}>{r}x</option>)}</select></label>
+                                    </div>
+                                  </div>
+                                </div>
 
-                {/* Stats Widgets Grid */}
-                <div className="stats-grid">
-                  <div className="stats-card">
-                    <div className="stats-card-header">
-                      <span>系统总用户</span>
-                      <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
-                    </div>
-                    <div className="stats-card-value">{devStats.users}</div>
-                  </div>
+                                <div className="web-action-bar">
+                                  <div
+                                      className="sidebar-avatar-wrapper clickable-profile"
+                                      onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
+                                      title="进入作者主页"
+                                  >
+                                    <div className="sidebar-avatar">
+                                      <img src={getAvatarUrl(activeVideo.creator_name)} alt="avatar" />
+                                    </div>
+                                    {activeVideo.user_id !== user?.id && (
+                                        <button className={`follow-badge-btn ${isFollowingCreator ? (isFriendWithCreator ? 'is-friend' : 'is-following') : ''}`} onClick={(e) => handleFollowToggle(activeVideo.user_id, e)} title={isFollowingCreator ? (isFriendWithCreator ? '好友' : '取关') : '关注'}>
+                                          {isFollowingCreator ? (isFriendWithCreator ? '♥' : '✓') : '+'}
+                                        </button>
+                                    )}
+                                  </div>
+                                  <button className={`action-item-button ${activeVideo.liked ? 'liked' : ''} ${likingVideoId === activeVideo.id ? 'is-loading' : ''}`} onClick={(e) => handleToggleLike(activeVideo.id, e)} disabled={likingVideoId === activeVideo.id}>
+                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
+                                    <span className="action-count">{activeVideo.likeCount ?? 0}</span>
+                                  </button>
+                                  <button
+                                      className="action-item-button special-action"
+                                      onClick={(e) => { e.stopPropagation(); openCommentsPanel(activeVideo.id); }}
+                                      title="查看评论"
+                                  >
+                                    <div className="action-icon-circle">
+                                      <svg viewBox="0 0 24 24">
+                                        <path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z" />
+                                      </svg>
+                                    </div>
+                                    <span className="action-count">{activeVideo.commentCount ?? activeVideo.comments_count ?? 0}</span>
+                                  </button>
+                                  <button className="action-item-button special-action" onClick={(e) => { e.stopPropagation(); openSharePanel(activeVideo.id); }}>
+                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
+                                    <span className="action-count">转发</span>
+                                  </button>
+                                  <button className="action-item-button special-action" onClick={openMyVideosPanel}>
+                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z"/></svg></div>
+                                    <span className="action-count">我的作品</span>
+                                  </button>
+                                  <button className="action-item-button special-action" onClick={openLikedVideosPanel}>
+                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
+                                    <span className="action-count">我的喜欢</span>
+                                  </button>
+                                  <button className="action-item-button special-action" onClick={openSharedVideosPanel}>
+                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
+                                    <span className="action-count">分享给我</span>
+                                  </button>
+                                </div>
 
-                  <div className="stats-card">
-                    <div className="stats-card-header">
-                      <span>推荐视频池</span>
-                      <svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
-                    </div>
-                    <div className="stats-card-value">{devStats.videos}</div>
-                  </div>
+                                <div className="web-nav-arrows">
+                                  <button className="arrow-nav-btn" onClick={handlePrevVideo} disabled={currentIndex === 0}>
+                                    <svg style={{ width: 22, height: 22, fill: 'currentColor' }} viewBox="0 0 24 24"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" /></svg>
+                                  </button>
+                                  <button className="arrow-nav-btn" onClick={handleNextVideo} disabled={currentIndex === videos.length - 1 && !feedPagination.hasMore}>
+                                    <svg style={{ width: 22, height: 22, fill: 'currentColor' }} viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" /></svg>
+                                  </button>
+                                </div>
 
-                  <div className="stats-card">
-                    <div className="stats-card-header">
-                      <span>全站总互动(点赞)</span>
-                      <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
-                    </div>
-                    <div className="stats-card-value">{devStats.likes}</div>
-                  </div>
+                                <div className="web-feed-progress">
+                                  {currentIndex + 1} / {videos.length}{isLoadingMoreFeed ? ' · 加载中...' : ''}
+                                </div>
+                              </div>
+                          ) : (
+                              <div className="web-feed-center"><p>@{selectedFollowingUser.username} 还没有发布任何视频</p></div>
+                          )}
+                        </main>
+                      </div>
+                  )}
 
-                  <div className="stats-card highlight">
-                    <div className="stats-card-header">
-                      <span>平均 API 延迟</span>
-                      <svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
-                    </div>
-                    <div className="stats-card-value" style={{ color: 'var(--primary-cyan)' }}>
-                      {devStats.averageResponseTimeMs} <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>ms</span>
-                    </div>
-                  </div>
-                </div>
+                  {/* 推荐页 */}
+                  {navTab !== 'friends' && navTab !== 'following' && (
+                      <main className="web-feed-main">
+                        {isLoadingFeed ? (
+                            <div className="web-feed-center"><div className="loading-spinner" /><p>算法组装中...</p></div>
+                        ) : allViewed ? (
+                            <div className="web-feed-center">
+                              <div className="empty-icon-glow"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg></div>
+                              <h3>推荐已看完</h3>
+                              <p>推荐算法通过您的"已看日志"识别了用户喜好，所有库里的视频已经过滤完毕。</p>
+                              <button className="reset-views-btn" onClick={handleResetViews}>🔄 重置浏览历史以重新排序</button>
+                            </div>
+                        ) : videos.length > 0 && activeVideo ? (
+                            <div className="web-video-stage" ref={videoStageRef} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+                              <div className="web-video-bg" style={{ backgroundImage: `url(${getMediaUrl(activeVideo.cover_url)})`, backgroundSize: 'cover', backgroundPosition: 'center', filter: 'blur(40px) brightness(0.4) saturate(1.5)', transform: 'scale(1.1)' }} />
+                              <div className={`web-video-wrapper ${isVideoZoomed ? 'is-zoomed' : ''}`} onClick={togglePlayState}>
+                                <video ref={videoRef} className={`web-video-player ${isVideoZoomed ? 'is-zoomed' : ''}`} loop muted={isMuted} preload="metadata" playsInline
+                                       src={getMediaUrl(activeVideo.video_url)} poster={activeVideo.cover_url ? getMediaUrl(activeVideo.cover_url) : undefined}
+                                       onTimeUpdate={handleVideoTimeUpdate} onLoadedMetadata={handleVideoLoadedMetadata} />
+                                <div className="video-play-overlay">{playTriggerAnim && <div className="play-pause-icon-anim">{isPlaying ? <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg> : <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>}</div>}</div>
+                                <button className="web-mute-button" onClick={toggleMuted}>{isMuted ? <svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.62 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73L16.25 17.52c-.67.52-1.43.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg> : <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>}</button>
+                                <button className="web-zoom-button" onClick={toggleVideoZoom}>
+                                  {isVideoZoomed ? <svg viewBox="0 0 24 24"><path d="M5 14h2v3h3v2H5v-5zm12 3v-3h2v5h-5v-2h3zM7 7v3H5V5h5v2H7zm12 3h-2V7h-3V5h5v5z"/></svg> : <svg viewBox="0 0 24 24"><path d="M15 3h6v6h-2V6.41l-4.29 4.3-1.42-1.42 4.3-4.29H15V3zM9 21H3v-6h2v2.59l4.29-4.3 1.42 1.42-4.3 4.29H9V21zm12 0h-6v-2h2.59l-4.3-4.29 1.42-1.42 4.29 4.3V15h2v6zM3 9V3h6v2H6.41l4.3 4.29-1.42 1.42-4.29-4.3V9H3z"/></svg>}
+                                </button>
+                                <div className="web-video-meta">
+                                  <div
+                                      className="creator-handle clickable-profile"
+                                      onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
+                                      title="进入作者主页"
+                                  >
+                                    @{activeVideo.creator_name || '未知创作者'}
+                                    {activeVideo.user_id === user?.id && <span className="my-publish-badge">我的发布</span>}
+                                  </div>
+                                  <div className="video-caption">{activeVideo.title}{activeVideo.description && ` — ${activeVideo.description}`}</div>
+                                  <div className="video-hashtags">#智能算法推荐 #SpringBoot #React</div>
+                                </div>
+                                <div className="web-video-controls" onClick={(e) => e.stopPropagation()}>
+                                  <div className="web-video-progress-track" onClick={handleSeekVideo}><div className="web-video-progress-fill" style={{ width: `${progressPercent}%` }} /></div>
+                                  <div className="web-video-controls-row">
+                                    <span className="web-video-time">{formatVideoTime(playbackProgress.currentTime)} / {formatVideoTime(playbackProgress.duration)}</span>
+                                    <label className="web-video-speed"><span>倍速</span><select value={playbackRate} onChange={handlePlaybackRateChange}>{PLAYBACK_SPEED_OPTIONS.map(r => <option key={r} value={r}>{r}x</option>)}</select></label>
+                                  </div>
+                                </div>
+                              </div>
 
-                {/* Terminal Console for scrolling logs */}
-                <div className="terminal-card">
-                  <div className="terminal-header">
-                    <div className="terminal-buttons">
-                      <div className="terminal-dot" />
-                      <div className="terminal-dot" />
-                      <div className="terminal-dot" />
-                    </div>
-                    <div className="terminal-title">spring-boot-server-requests.log</div>
-                    <button className="terminal-clear-btn" onClick={() => setDevLogs([])}>
-                      Clear
+                              <div className="web-action-bar">
+                                {/* 动作按钮内容 */}
+                                <div
+                                    className="sidebar-avatar-wrapper clickable-profile"
+                                    onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
+                                    title="进入作者主页"
+                                >
+                                  <div className="sidebar-avatar">
+                                    <img src={getAvatarUrl(activeVideo.creator_name)} alt="avatar" />
+                                  </div>
+                                  {activeVideo.user_id !== user?.id && (
+                                      <button className={`follow-badge-btn ${isFollowingCreator ? (isFriendWithCreator ? 'is-friend' : 'is-following') : ''}`} onClick={(e) => handleFollowToggle(activeVideo.user_id, e)} title={isFollowingCreator ? (isFriendWithCreator ? '好友' : '取关') : '关注'}>
+                                        {isFollowingCreator ? (isFriendWithCreator ? '♥' : '✓') : '+'}
+                                      </button>
+                                  )}
+                                </div>
+                                <button className={`action-item-button ${activeVideo.liked ? 'liked' : ''} ${likingVideoId === activeVideo.id ? 'is-loading' : ''}`} onClick={(e) => handleToggleLike(activeVideo.id, e)} disabled={likingVideoId === activeVideo.id}>
+                                  <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
+                                  <span className="action-count">{activeVideo.likeCount ?? 0}</span>
+                                </button>
+                                <button
+                                    className="action-item-button special-action"
+                                    onClick={(e) => { e.stopPropagation(); openCommentsPanel(activeVideo.id); }}
+                                    title="查看评论"
+                                >
+                                  <div className="action-icon-circle">
+                                    <svg viewBox="0 0 24 24">
+                                      <path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z" />
+                                    </svg>
+                                  </div>
+                                  <span className="action-count">{activeVideo.commentCount ?? activeVideo.comments_count ?? 0}</span>
+                                </button>
+                                <button className="action-item-button special-action" onClick={(e) => { e.stopPropagation(); openSharePanel(activeVideo.id); }}>
+                                  <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
+                                  <span className="action-count">转发</span>
+                                </button>
+                                <button className="action-item-button special-action" onClick={openMyVideosPanel}>
+                                  <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z"/></svg></div>
+                                  <span className="action-count">我的作品</span>
+                                </button>
+                                <button className="action-item-button special-action" onClick={openLikedVideosPanel}>
+                                  <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
+                                  <span className="action-count">我的喜欢</span>
+                                </button>
+                                <button className="action-item-button special-action" onClick={openSharedVideosPanel}>
+                                  <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
+                                  <span className="action-count">分享给我</span>
+                                </button>
+                              </div>
+
+                              <div className="web-nav-arrows">
+                                <button className="arrow-nav-btn" onClick={handlePrevVideo} disabled={currentIndex === 0}>
+                                  <svg style={{ width: 22, height: 22, fill: 'currentColor' }} viewBox="0 0 24 24"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" /></svg>
+                                </button>
+                                <button className="arrow-nav-btn" onClick={handleNextVideo} disabled={currentIndex === videos.length - 1 && !feedPagination.hasMore}>
+                                  <svg style={{ width: 22, height: 22, fill: 'currentColor' }} viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" /></svg>
+                                </button>
+                              </div>
+
+                              <div className="web-feed-progress">
+                                {currentIndex + 1} / {videos.length}{isLoadingMoreFeed ? ' · 加载中...' : ''}
+                              </div>
+                            </div>
+                        ) : (
+                            <div className="web-feed-center">
+                              <h3>视频库空空如也</h3>
+                              <p>服务器数据库中没有任何可推荐视频。</p>
+                              <button className="reset-views-btn" onClick={() => setIsUploadOpen(true)}>➕ 发布全站首款视频</button>
+                            </div>
+                        )}
+                      </main>
+                  )}
+
+                  {/* 朋友页面 */}
+                  {navTab === 'friends' && (
+                      <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+                        {/* 左侧朋友列表 */}
+                        <div style={{ width: 260, flexShrink: 0, background: 'rgba(0,0,0,0.6)', borderRight: '1px solid rgba(255,255,255,0.08)', overflowY: 'auto', padding: '16px 0' }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.4)', padding: '0 16px 12px', textTransform: 'uppercase', letterSpacing: 1 }}>我的朋友</div>
+                          {isLoadingFriends ? (
+                              <div style={{ textAlign: 'center', padding: 32 }}><div className="loading-spinner" style={{ width: 28, height: 28, margin: '0 auto' }} /></div>
+                          ) : friends.length > 0 ? friends.map(f => (
+                              <div key={f.id}
+                                   onClick={() => fetchUserVideos(f)}
+                                   style={{
+                                     display: 'flex', alignItems: 'center', gap: 12,
+                                     padding: '12px 16px', cursor: 'pointer',
+                                     background: selectedFollowingUser?.id === f.id ? 'rgba(186,230,253,0.12)' : 'transparent',
+                                     borderLeft: selectedFollowingUser?.id === f.id ? '3px solid var(--primary-cyan)' : '3px solid transparent',
+                                     transition: 'all 0.15s'
+                                   }}
+                              >
+                                <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${f.username}`} alt="" style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, border: selectedFollowingUser?.id === f.id ? '2px solid var(--primary-cyan)' : 'none' }} />
+                                <div style={{ minWidth: 0, flex: 1 }}>
+                                  <div style={{ fontSize: 14, fontWeight: 600, color: selectedFollowingUser?.id === f.id ? 'var(--primary-cyan)' : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{f.username}</div>
+                                  {f.displayName && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>{f.displayName}</div>}
+                                  <div style={{ fontSize: 10, color: 'var(--primary-pink)', marginTop: 2 }}>♥ 互关好友</div>
+                                </div>
+                              </div>
+                          )) : (
+                              <div style={{ padding: '32px 20px', fontSize: 13, color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>还没有互关好友<br />去关注你喜欢的创作者吧</div>
+                          )}
+                        </div>
+
+                        {/* 右侧视频区域 */}
+                        <main className="web-feed-main" style={{ flex: 1 }}>
+                          {!selectedFollowingUser ? (
+                              <div className="web-feed-center">
+                                <div style={{ fontSize: 48, marginBottom: 16 }}>👈</div>
+                                <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)' }}>从左侧选择一个朋友<br />查看他发布的视频</p>
+                              </div>
+                          ) : isLoadingFeed ? (
+                              <div className="web-feed-center"><div className="loading-spinner" /><p>加载中...</p></div>
+                          ) : videos.length > 0 && activeVideo ? (
+                              <div className="web-video-stage" ref={videoStageRef} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+                                <div className="web-video-bg" style={{ backgroundImage: `url(${getMediaUrl(activeVideo.cover_url)})`, backgroundSize: 'cover', backgroundPosition: 'center', filter: 'blur(40px) brightness(0.4) saturate(1.5)', transform: 'scale(1.1)' }} />
+                                <div className={`web-video-wrapper ${isVideoZoomed ? 'is-zoomed' : ''}`} onClick={togglePlayState}>
+                                  <video ref={videoRef} className={`web-video-player ${isVideoZoomed ? 'is-zoomed' : ''}`} loop muted={isMuted} preload="metadata" playsInline
+                                         src={getMediaUrl(activeVideo.video_url)} poster={activeVideo.cover_url ? getMediaUrl(activeVideo.cover_url) : undefined}
+                                         onTimeUpdate={handleVideoTimeUpdate} onLoadedMetadata={handleVideoLoadedMetadata} />
+                                  <div className="video-play-overlay">{playTriggerAnim && <div className="play-pause-icon-anim">{isPlaying ? <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg> : <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>}</div>}</div>
+                                  <button className="web-mute-button" onClick={toggleMuted}>{isMuted ? <svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.62 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73L16.25 17.52c-.67.52-1.43.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg> : <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>}</button>
+                                  <button className="web-zoom-button" onClick={toggleVideoZoom}>
+                                    {isVideoZoomed ? <svg viewBox="0 0 24 24"><path d="M5 14h2v3h3v2H5v-5zm12 3v-3h2v5h-5v-2h3zM7 7v3H5V5h5v2H7zm12 3h-2V7h-3V5h5v5z"/></svg> : <svg viewBox="0 0 24 24"><path d="M15 3h6v6h-2V6.41l-4.29 4.3-1.42-1.42 4.3-4.29H15V3zM9 21H3v-6h2v2.59l4.29-4.3 1.42 1.42-4.3 4.29H9V21zm12 0h-6v-2h2.59l-4.3-4.29 1.42-1.42 4.29 4.3V15h2v6zM3 9V3h6v2H6.41l4.3 4.29-1.42 1.42-4.29-4.3V9H3z"/></svg>}
+                                  </button>
+                                  <div className="web-video-meta">
+                                    <div
+                                        className="creator-handle clickable-profile"
+                                        onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
+                                        title="进入作者主页"
+                                    >
+                                      @{activeVideo.creator_name || '未知创作者'}
+                                      {activeVideo.user_id === user?.id && <span className="my-publish-badge">我的发布</span>}
+                                    </div>
+                                    <div className="video-caption">{activeVideo.title}{activeVideo.description && ` — ${activeVideo.description}`}</div>
+                                    <div className="video-hashtags">#智能算法推荐 #SpringBoot #React</div>
+                                  </div>
+                                  <div className="web-video-controls" onClick={(e) => e.stopPropagation()}>
+                                    <div className="web-video-progress-track" onClick={handleSeekVideo}><div className="web-video-progress-fill" style={{ width: `${progressPercent}%` }} /></div>
+                                    <div className="web-video-controls-row">
+                                      <span className="web-video-time">{formatVideoTime(playbackProgress.currentTime)} / {formatVideoTime(playbackProgress.duration)}</span>
+                                      <label className="web-video-speed"><span>倍速</span><select value={playbackRate} onChange={handlePlaybackRateChange}>{PLAYBACK_SPEED_OPTIONS.map(r => <option key={r} value={r}>{r}x</option>)}</select></label>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="web-action-bar">
+                                  <div
+                                      className="sidebar-avatar-wrapper clickable-profile"
+                                      onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
+                                      title="进入作者主页"
+                                  >
+                                    <div className="sidebar-avatar">
+                                      <img src={getAvatarUrl(activeVideo.creator_name)} alt="avatar" />
+                                    </div>
+                                    {activeVideo.user_id !== user?.id && (
+                                        <button className={`follow-badge-btn ${isFollowingCreator ? (isFriendWithCreator ? 'is-friend' : 'is-following') : ''}`} onClick={(e) => handleFollowToggle(activeVideo.user_id, e)} title={isFollowingCreator ? (isFriendWithCreator ? '好友' : '取关') : '关注'}>
+                                          {isFollowingCreator ? (isFriendWithCreator ? '♥' : '✓') : '+'}
+                                        </button>
+                                    )}
+                                  </div>
+                                  <button className={`action-item-button ${activeVideo.liked ? 'liked' : ''} ${likingVideoId === activeVideo.id ? 'is-loading' : ''}`} onClick={(e) => handleToggleLike(activeVideo.id, e)} disabled={likingVideoId === activeVideo.id}>
+                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
+                                    <span className="action-count">{activeVideo.likeCount ?? 0}</span>
+                                  </button>
+                                  <button
+                                      className="action-item-button special-action"
+                                      onClick={(e) => { e.stopPropagation(); openCommentsPanel(activeVideo.id); }}
+                                      title="查看评论"
+                                  >
+                                    <div className="action-icon-circle">
+                                      <svg viewBox="0 0 24 24">
+                                        <path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z" />
+                                      </svg>
+                                    </div>
+                                    <span className="action-count">{activeVideo.commentCount ?? activeVideo.comments_count ?? 0}</span>
+                                  </button>
+                                  <button className="action-item-button special-action" onClick={(e) => { e.stopPropagation(); openSharePanel(activeVideo.id); }}>
+                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
+                                    <span className="action-count">转发</span>
+                                  </button>
+                                  <button className="action-item-button special-action" onClick={openMyVideosPanel}>
+                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z"/></svg></div>
+                                    <span className="action-count">我的作品</span>
+                                  </button>
+                                  <button className="action-item-button special-action" onClick={openLikedVideosPanel}>
+                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
+                                    <span className="action-count">我的喜欢</span>
+                                  </button>
+                                  <button className="action-item-button special-action" onClick={openSharedVideosPanel}>
+                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
+                                    <span className="action-count">分享给我</span>
+                                  </button>
+                                </div>
+                                <div className="web-nav-arrows">
+                                  <button className="arrow-nav-btn" onClick={handlePrevVideo} disabled={currentIndex === 0}><svg style={{ width: 22, height: 22, fill: 'currentColor' }} viewBox="0 0 24 24"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" /></svg></button>
+                                  <button className="arrow-nav-btn" onClick={handleNextVideo} disabled={currentIndex === videos.length - 1 && !feedPagination.hasMore}><svg style={{ width: 22, height: 22, fill: 'currentColor' }} viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" /></svg></button>
+                                </div>
+                                <div className="web-feed-progress">{currentIndex + 1} / {videos.length}{isLoadingMoreFeed ? ' · 加载中...' : ''}</div>
+                              </div>
+                          ) : (
+                              <div className="web-feed-center"><p>@{selectedFollowingUser.username} 还没有发布任何视频</p></div>
+                          )}
+                        </main>
+                      </div>
+                  )}
+                </>
+            )}
+            {/* 用户主页 */}
+            {currentView === 'profile' && (
+                <main className="user-profile-page">
+                  <div className="profile-top-bar">
+                    <button className="profile-back-btn" onClick={closeUserProfile} title="返回推荐">
+                      <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" /></svg>
+                      返回
                     </button>
                   </div>
 
-                  <div className="terminal-console">
-                    {devLogs.length > 0 ? (
-                        devLogs.map((log, i) => (
+                  {isLoadingProfile && !profileUser ? (
+                      <div className="profile-loading">
+                        <div className="loading-spinner" />
+                        <p>加载用户资料...</p>
+                      </div>
+                  ) : profileUser ? (
+                      <>
+                        <div className="profile-header">
+                          <div className="profile-avatar-large">
+                            <img src={getAvatarUrl(profileUser)} alt={profileUser.username} />
+                          </div>
+                          <div className="profile-info">
+                            <h2>@{profileUser.username}</h2>
+                            <div className="profile-id">用户 ID：{profileUser.id}</div>
+                            {profileUser.displayName && (
+                                <div className="profile-display-name">{profileUser.displayName}</div>
+                            )}
+                            <div className="profile-stats">
+                              <span className="profile-stat-item">
+                                <strong>{profileUser.totalLikesReceived ?? 0}</strong> 获赞
+                              </span>
+                              <span className="profile-stat-item">
+                                <strong>{profileUser.publishedVideoCount ?? 0}</strong> 作品
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="profile-tabs">
+                          <button
+                              className={`profile-tab ${profileTab === 'published' ? 'active' : ''}`}
+                              onClick={() => switchProfileTab('published')}
+                          >
+                            发布的视频
+                          </button>
+                          <button
+                              className={`profile-tab ${profileTab === 'liked' ? 'active' : ''}`}
+                              onClick={() => switchProfileTab('liked')}
+                          >
+                            点赞的视频
+                          </button>
+                        </div>
+
+                        <div className="profile-videos-section">
+                          {profileVideos.length > 0 ? (
+                              <div className="my-videos-grid web-modal-grid profile-video-grid">
+                                {profileVideos.map((pv) => (
+                                    <div
+                                        key={`profile-${profileTab}-${pv.id}`}
+                                        className="grid-video-card"
+                                        onClick={() => handlePlayProfileVideo(pv)}
+                                    >
+                                      <img
+                                          className="grid-video-cover"
+                                          src={getMediaUrl(pv.cover_url)}
+                                          alt={pv.title}
+                                      />
+                                      <div className="grid-video-info">
+                                        <svg viewBox="0 0 24 24">
+                                          <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                                        </svg>
+                                        <span>{pv.likeCount ?? pv.likes_count ?? 0}</span>
+                                      </div>
+                                    </div>
+                                ))}
+                              </div>
+                          ) : (
+                              <div className="profile-videos-empty">
+                                <p>{profileTab === 'published' ? '该用户还没有发布视频' : '该用户还没有点赞任何视频'}</p>
+                              </div>
+                          )}
+
+                          <div className="my-videos-pagination profile-pagination">
+                            <button onClick={() => fetchProfileVideos(profileTab, profileUserId)}>
+                              刷新
+                            </button>
+                            <span>{profileVideosPagination.hasMore ? '还有更多' : '已加载全部'}</span>
+                            <button
+                                disabled={!profileVideosPagination.hasMore}
+                                onClick={() => fetchProfileVideos(
+                                    profileTab,
+                                    profileUserId,
+                                    profileVideosPagination.nextCursor,
+                                    true
+                                )}
+                            >
+                              加载更多
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                  ) : (
+                      <div className="profile-loading">
+                        <p>用户不存在或无法加载</p>
+                        <button className="reset-views-btn" onClick={closeUserProfile}>返回推荐</button>
+                      </div>
+                  )}
+                </main>
+            )}
+
+            {currentView === 'admin' && isAdmin && (
+                <main className="admin-page-main">
+                  <section className="dev-console-panel admin-fullpage">
+                    <div className="console-title-bar">
+                      <h2><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-4 6h-4v2h4v2h-4v2h4v2H9V7h6v2z"/></svg>抖音 API 开发者监控面板</h2>
+                      <div className="live-badge"><span className="blink-dot" />Live Connected</div>
+                    </div>
+                    <div className="stats-grid">
+                      <div className="stats-card"><div className="stats-card-header"><span>系统总用户</span><svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg></div><div className="stats-card-value">{devStats.users}</div></div>
+                      <div className="stats-card"><div className="stats-card-header"><span>推荐视频池</span><svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg></div><div className="stats-card-value">{devStats.videos}</div></div>
+                      <div className="stats-card"><div className="stats-card-header"><span>全站总互动(点赞)</span><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div><div className="stats-card-value">{devStats.likes}</div></div>
+                      <div className="stats-card highlight"><div className="stats-card-header"><span>平均 API 延迟</span><svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg></div><div className="stats-card-value" style={{ color: 'var(--primary-cyan)' }}>{devStats.averageResponseTimeMs} <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>ms</span></div></div>
+                    </div>
+                    <div className="terminal-card">
+                      <div className="terminal-header"><div className="terminal-buttons"><div className="terminal-dot" /><div className="terminal-dot" /><div className="terminal-dot" /></div><div className="terminal-title">spring-boot-server-requests.log</div><button className="terminal-clear-btn" onClick={() => setDevLogs([])}>Clear</button></div>
+                      <div className="terminal-console">
+                        {devLogs.length > 0 ? devLogs.map((log, i) => (
                             <div key={i} className="log-row">
                               <span className="log-timestamp">[{log.timestamp}]</span>
                               <span className={`log-method ${log.method}`}>{log.method}</span>
                               <span className="log-url">{log.url}</span>
-                              <span className={`log-status ${log.statusCode >= 200 && log.statusCode < 300 ? 'status-2xx' : log.statusCode >= 400 && log.statusCode < 500 ? 'status-4xx' : 'status-5xx'}`}>
-                        {log.statusCode}
-                      </span>
-                              <span className="log-duration" style={{ color: log.durationMs > 500 ? '#ff4d4d' : 'inherit' }}>
-                        {log.durationMs}ms
-                      </span>
-                              <button
-                                  type="button"
-                                  onClick={() => setLogDetailModal(log)}
-                                  style={{
-                                    background: 'transparent',
-                                    border: 0,
-                                    color: 'var(--primary-cyan)',
-                                    cursor: 'pointer',
-                                    fontSize: 12,
-                                    marginLeft: 8,
-                                    padding: 0
-                                  }}
-                              >
-                                详情
-                              </button>
+                              <span className={`log-status ${log.statusCode >= 200 && log.statusCode < 300 ? 'status-2xx' : log.statusCode >= 400 && log.statusCode < 500 ? 'status-4xx' : 'status-5xx'}`}>{log.statusCode}</span>
+                              <span className="log-duration" style={{ color: log.durationMs > 500 ? '#ff4d4d' : 'inherit' }}>{log.durationMs}ms</span>
+                              <button type="button" onClick={() => setLogDetailModal(log)} style={{ background: 'transparent', border: 0, color: 'var(--primary-cyan)', cursor: 'pointer', fontSize: 12, marginLeft: 8, padding: 0 }}>详情</button>
                             </div>
-                        ))
-                    ) : (
-                        <div className="terminal-empty-text">
-                          ⌨️ 等待 API 网络请求中... 切换到"视频"页操作即可看见实时 Spring Boot 拦截日志！
-                        </div>
-                    )}
-                  </div>
-                </div>
+                        )) : <div className="terminal-empty-text">⌨️ 等待 API 网络请求中... 切换到"视频"页操作即可看见实时 Spring Boot 拦截日志！</div>}
+                      </div>
+                    </div>
+                    <div className="dev-controls-card">
+                      <h3>🎛️ 算法与数据库交互中心</h3>
+                      <div className="controls-flex">
+                        <button className="dev-action-btn" onClick={fetchRecommendations}>🔍 强制同步算法推荐源</button>
+                        <button className="dev-action-btn" onClick={handleResetViews}>🔄 一键清空我的"已看日志"</button>
+                        <button className="dev-action-btn danger" onClick={handleDeleteAccount}>⚠️ 注销测试账户 (重置关联)</button>
+                      </div>
+                    </div>
+                  </section>
+                </main>
+            )}
+          </div>
+        </div>
 
-                {/* Developer Quick Controllers */}
-                <div className="dev-controls-card">
-                  <h3>🎛️ 算法与数据库交互中心</h3>
-                  <div className="controls-flex">
-                    <button className="dev-action-btn" onClick={fetchRecommendations}>
-                      🔍 强制同步算法推荐源
-                    </button>
-                    <button className="dev-action-btn" onClick={handleResetViews}>
-                      🔄 一键清空我的"已看日志"
-                    </button>
-                    <button className="dev-action-btn danger" onClick={handleDeleteAccount}>
-                      ⚠️ 注销测试账户 (重置关联)
-                    </button>
-                  </div>
-                </div>
-
-              </section>
-            </main>
-        )}
-
-        {/* ============================================== */}
-        {/* MODALS                                          */}
-        {/* ============================================== */}
+        {/* ========== MODALS ========== */}
 
         {/* Comments Modal */}
         {isCommentsOpen && (
@@ -1908,11 +2154,7 @@ export default function App() {
                 </div>
 
                 <div className="my-videos-pagination">
-                  <button
-                      onClick={() => fetchMyVideos()}
-                  >
-                    刷新
-                  </button>
+                  <button onClick={() => fetchMyVideos()}>刷新</button>
                   <span>{myVideosPagination.hasMore ? '还有更多作品' : '已加载全部作品'}</span>
                   <button
                       disabled={!myVideosPagination.hasMore}
@@ -1971,11 +2213,7 @@ export default function App() {
                 </div>
 
                 <div className="my-videos-pagination">
-                  <button
-                      onClick={() => fetchLikeNotifications()}
-                  >
-                    刷新
-                  </button>
+                  <button onClick={() => fetchLikeNotifications()}>刷新</button>
                   <span>{likeNotificationsPagination.hasMore ? '还有更多通知' : '已加载全部通知'}</span>
                   <button
                       disabled={!likeNotificationsPagination.hasMore}
@@ -2250,9 +2488,9 @@ export default function App() {
                                 alt={sv.title}
                             />
                             <div className="grid-video-info">
-                              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                来自 @{sv.shared_by || 'unknown'}
-                              </span>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        来自 @{sv.shared_by || 'unknown'}
+                      </span>
                             </div>
                           </div>
                       ))
@@ -2384,14 +2622,7 @@ export default function App() {
             </div>
         )}
 
-        {/* Toast */}
-        {toast && (
-            <div className={`toast ${toast.isError ? 'error' : ''}`}>
-              <span>{toast.message}</span>
-            </div>
-        )}
+        {toast && <div className={`toast ${toast.isError ? 'error' : ''}`}><span>{toast.message}</span></div>}
       </div>
-
-
   );
 }
