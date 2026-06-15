@@ -18,12 +18,61 @@ const FEED_PREFETCH_THRESHOLD = 3;
 const MEDIA_PRELOAD_AHEAD = 2;
 const PLAYBACK_SPEED_OPTIONS = [0.5, 1, 1.25, 1.5, 2];
 
+const FEATURED_CATEGORIES = [
+  { id: 'all', label: '全部' },
+  { id: 'game', label: '游戏', keyword: '游戏' },
+  { id: 'anime', label: '二次元', keyword: '二次元' },
+  { id: 'music', label: '音乐', keyword: '音乐' },
+  { id: 'film', label: '影视', keyword: '影视' },
+  { id: 'food', label: '美食', keyword: '美食' },
+  { id: 'knowledge', label: '知识', keyword: '知识' },
+  { id: 'theater', label: '小剧场', keyword: '小剧场' },
+  { id: 'vlog', label: '生活vlog', keyword: '生活' },
+  { id: 'sports', label: '体育', keyword: '运动' },
+  { id: 'travel', label: '旅行', keyword: '旅行' },
+  { id: 'tech', label: '科技', keyword: '科技' },
+  { id: 'nature', label: '自然', keyword: '自然' },
+  { id: 'creative', label: '创意', keyword: '创意' },
+];
+
 const formatVideoTime = (seconds) => {
   if (!Number.isFinite(seconds) || seconds < 0) return '00:00';
   const totalSeconds = Math.floor(seconds);
   const minutes = Math.floor(totalSeconds / 60);
   const remainSeconds = totalSeconds % 60;
   return `${String(minutes).padStart(2, '0')}:${String(remainSeconds).padStart(2, '0')}`;
+};
+
+const formatLikeCount = (value) => {
+  const num = Number(value) || 0;
+  if (num >= 10000) return `${(num / 10000).toFixed(1)}万`;
+  if (num >= 1000) return `${(num / 1000).toFixed(1)}千`;
+  return String(num);
+};
+
+const formatRelativeTime = (value) => {
+  if (!value) return '刚刚';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const diffMs = Date.now() - date.getTime();
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return '刚刚';
+  if (minutes < 60) return `${minutes}分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}天前`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}个月前`;
+  return `${Math.floor(months / 12)}年前`;
+};
+
+const estimateVideoDuration = (video) => {
+  const seed = Number(video?.id) || 0;
+  const totalSeconds = 45 + (seed % 240);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 };
 
 export default function App() {
@@ -38,7 +87,14 @@ export default function App() {
 
   // View switching: 'feed' (用户视频页) | 'admin' (管理员监控台) | 'profile' (用户主页)
   const [currentView, setCurrentView] = useState('feed');
-  const [navTab, setNavTab] = useState('recommend');
+  const [navTab, setNavTab] = useState('featured');
+
+  // 精选页：分类 + 网格
+  const [featuredCategory, setFeaturedCategory] = useState('all');
+  const [featuredVideos, setFeaturedVideos] = useState([]);
+  const [featuredPagination, setFeaturedPagination] = useState({ nextCursor: null, hasMore: false });
+  const [isLoadingFeatured, setIsLoadingFeatured] = useState(false);
+  const categoryBarRef = useRef(null);
 
   // Video feed state
   const [videos, setVideos] = useState([]);
@@ -52,6 +108,7 @@ export default function App() {
   const [feedPagination, setFeedPagination] = useState({ nextCursor: null, hasMore: false });
   const [playTriggerAnim, setPlayTriggerAnim] = useState(false);
   const [likingVideoId, setLikingVideoId] = useState(null);
+  const [downloadingVideoId, setDownloadingVideoId] = useState(null);
   const [isVideoZoomed, setIsVideoZoomed] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [playbackProgress, setPlaybackProgress] = useState({ currentTime: 0, duration: 0 });
@@ -135,6 +192,7 @@ export default function App() {
   const touchStartRef = useRef({ y: 0 });
   const videoStageRef = useRef(null);
   const loadingMoreFeedRef = useRef(false);
+  const curatedFeedRef = useRef(false);
   const preloadedMediaRef = useRef([]);
 
   const [searchPage, setSearchPage] = useState(false);
@@ -249,7 +307,9 @@ export default function App() {
   }, [token, videos.length, allViewed, currentIndex, currentView, feedPagination, isLoadingMoreFeed]);
 
   useEffect(() => {
-    if (navTab === 'friends' && token) {
+    if (navTab === 'featured' && token) {
+      fetchFeaturedVideos(featuredCategory);
+    } else if (navTab === 'friends' && token) {
       // 切换到朋友页：清空视频，加载朋友列表
       setVideos([]);
       setSelectedFollowingUser(null);
@@ -260,6 +320,9 @@ export default function App() {
       setSelectedFollowingUser(null);
       fetchFollowing();
     } else if (navTab === 'recommend' && token) {
+      if (curatedFeedRef.current) {
+        return;
+      }
       // 切换到推荐页：清空视频，重新加载推荐
       setVideos([]);
       setCurrentIndex(0);
@@ -390,7 +453,7 @@ export default function App() {
       const currentUser = await fetchCurrentUser();
       if (currentUser) {
         Promise.allSettled([
-          fetchRecommendations(),
+          navTab === 'featured' ? fetchFeaturedVideos(featuredCategory) : fetchRecommendations(),
           fetchLikeNotificationUnreadCount()
         ]);
       }
@@ -463,6 +526,9 @@ export default function App() {
     }
     if (data && data.success) {
       const fetchedVideos = (data.videos || []).map(normalizeFeedVideo);
+      if (!append && curatedFeedRef.current) {
+        return fetchedVideos.length > 0;
+      }
       setVideos(prev => append ? [...prev, ...fetchedVideos] : fetchedVideos);
       setAllViewed(append ? false : data.allViewed);
       setTotalCount(data.totalCount);
@@ -478,8 +544,66 @@ export default function App() {
     return false;
   };
 
+  const fetchFeaturedVideos = async (categoryId = featuredCategory, cursor = null, append = false) => {
+    setIsLoadingFeatured(true);
+    const category = FEATURED_CATEGORIES.find((item) => item.id === categoryId) || FEATURED_CATEGORIES[0];
+    let data;
+    if (categoryId === 'all') {
+      const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+      data = await apiFetch(`${API_PREFIX}/videos/featured?limit=24${cursorParam}`);
+      if ((!data || !data.success) && !append) {
+        const fallback = await apiFetch(`${API_PREFIX}/videos/recommendations?limit=24`);
+        if (fallback && fallback.success) {
+          data = fallback;
+        }
+      }
+    } else {
+      data = await apiFetch(`${API_PREFIX}/videos/search?q=${encodeURIComponent(category.keyword || category.label)}`);
+    }
+    setIsLoadingFeatured(false);
+    if (data && data.success) {
+      const fetchedVideos = (data.videos || []).map(normalizeFeedVideo);
+      setFeaturedVideos((prev) => append ? [...prev, ...fetchedVideos] : fetchedVideos);
+      if (categoryId === 'all') {
+        setFeaturedPagination({
+          nextCursor: data.pagination?.nextCursor ?? null,
+          hasMore: data.pagination?.hasMore ?? false,
+        });
+      } else {
+        setFeaturedPagination({ nextCursor: null, hasMore: false });
+      }
+      return fetchedVideos.length > 0;
+    }
+    if (!append) {
+      setFeaturedVideos([]);
+      setFeaturedPagination({ nextCursor: null, hasMore: false });
+      if (categoryId === 'all') {
+        showToast(data?.message || '精选视频加载失败，请确认后端已重启', true);
+      }
+    }
+    return false;
+  };
+
+  const switchFeaturedCategory = async (categoryId) => {
+    if (categoryId === featuredCategory) return;
+    setFeaturedCategory(categoryId);
+    await fetchFeaturedVideos(categoryId);
+  };
+
+  const scrollFeaturedCategories = (direction) => {
+    if (!categoryBarRef.current) return;
+    categoryBarRef.current.scrollBy({ left: direction * 220, behavior: 'smooth' });
+  };
+
+  const handlePlayFeaturedVideo = (videoItem, index) => {
+    startSingleVideoPlayback(videoItem, {
+      queue: featuredVideos,
+      startIndex: index >= 0 ? index : 0,
+    });
+  };
+
   const recordVideoView = async (videoId) => {
-    await apiFetch(`${API_PREFIX}/videos/${videoId}/views`, { method: 'POST' });
+    await apiFetch(`${API_PREFIX}/videos/${videoId}/views`, { method: 'POST', silent: true, timeoutMs: 15000 });
   };
 
   const handleToggleLike = async (videoId, e) => {
@@ -506,7 +630,7 @@ export default function App() {
   };
 
   const handleResetViews = async () => {
-    const data = await apiFetch(`${API_PREFIX}/users/me/views`, { method: 'DELETE' });
+    const data = await apiFetch(`${API_PREFIX}/users/me/views`, { method: 'DELETE', timeoutMs: 60000 });
     if (data && data.success) {
       showToast(data.message);
       loadingMoreFeedRef.current = false;
@@ -518,6 +642,165 @@ export default function App() {
       await fetchRecommendations();
     }
   };
+
+  const parseDownloadFilename = (contentDisposition, fallback) => {
+    if (!contentDisposition) return fallback;
+    const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utf8Match) {
+      try {
+        return decodeURIComponent(utf8Match[1].trim());
+      } catch {
+        return fallback;
+      }
+    }
+    const plainMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+    return plainMatch ? plainMatch[1].trim() : fallback;
+  };
+
+  const isValidVideoBlob = async (blob) => {
+    if (!blob || blob.size < 1024) return false;
+    const header = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+    const isMp4 = header.length >= 8
+      && header[4] === 0x66 && header[5] === 0x74 && header[6] === 0x79 && header[7] === 0x70;
+    const isWebm = header.length >= 4
+      && header[0] === 0x1a && header[1] === 0x45 && header[2] === 0xdf && header[3] === 0xa3;
+    return isMp4 || isWebm || (blob.type.startsWith('video/') && blob.size > 10000);
+  };
+
+  const saveVideoBlob = (blob, filename) => {
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(blobUrl);
+  };
+
+  const handleDownloadVideo = async (video, e) => {
+    e?.stopPropagation();
+    if (!token) {
+      showToast('请先登录后再下载', true);
+      return;
+    }
+    if (!video?.id || downloadingVideoId === video.id) return;
+
+    const sourceUrl = video.video_url || '';
+    const fallbackName = `${(video.title || 'video').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)}_${video.id}.mp4`;
+    const isExternalUrl = sourceUrl.startsWith('http://') || sourceUrl.startsWith('https://');
+
+    const fetchFromApi = async (signal) => {
+      const response = await fetch(`${API_BASE}${API_PREFIX}/videos/${video.id}/download`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal,
+      });
+      if (!response.ok) {
+        let message = '视频下载失败，请稍后重试';
+        try {
+          const errData = await response.json();
+          if (errData?.message) message = errData.message;
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+      const blob = await response.blob();
+      const contentType = response.headers.get('Content-Type') || '';
+      if (contentType.includes('application/json')) {
+        try {
+          const errData = JSON.parse(await blob.text());
+          throw new Error(errData?.message || '视频下载失败，请稍后重试');
+        } catch (parseErr) {
+          if (parseErr.message && !parseErr.message.includes('JSON')) throw parseErr;
+          throw new Error('视频下载失败，请稍后重试');
+        }
+      }
+      if (!(await isValidVideoBlob(blob))) {
+        throw new Error('视频文件不存在或已损坏');
+      }
+      return {
+        blob,
+        filename: parseDownloadFilename(response.headers.get('Content-Disposition'), fallbackName),
+      };
+    };
+
+    const fetchFromCdn = async (signal) => {
+      const response = await fetch(getMediaUrl(sourceUrl), { signal });
+      if (!response.ok) throw new Error('direct fetch failed');
+      const blob = await response.blob();
+      if (!(await isValidVideoBlob(blob))) throw new Error('视频文件无法访问');
+      return { blob, filename: fallbackName };
+    };
+
+    setDownloadingVideoId(video.id);
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 180000);
+      const strategies = sourceUrl.startsWith('/uploads/')
+        ? [fetchFromApi]
+        : isExternalUrl
+          ? [fetchFromCdn, fetchFromApi]
+          : [];
+
+      if (strategies.length === 0) {
+        throw new Error('视频地址无效');
+      }
+
+      let saved = false;
+      for (const strategy of strategies) {
+        try {
+          const result = await strategy(controller.signal);
+          saveVideoBlob(result.blob, result.filename);
+          saved = true;
+          break;
+        } catch (strategyErr) {
+          console.warn('download strategy failed', strategyErr);
+        }
+      }
+      clearTimeout(timeoutId);
+
+      if (saved) {
+        showToast('视频已保存到本地');
+        return;
+      }
+
+      if (isExternalUrl) {
+        const link = document.createElement('a');
+        link.href = getMediaUrl(sourceUrl);
+        link.download = fallbackName;
+        link.rel = 'noopener';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        showToast('已交由浏览器下载，请稍后在「下载」文件夹查看');
+        return;
+      }
+
+      throw new Error('视频下载失败，请稍后重试');
+    } catch (err) {
+      console.error(err);
+      showToast(err.message || '视频下载失败，请稍后重试', true);
+    } finally {
+      setDownloadingVideoId(null);
+    }
+  };
+
+  const renderDownloadButton = (video) => (
+    <button
+      className={`action-item-button special-action ${downloadingVideoId === video.id ? 'is-loading' : ''}`}
+      onClick={(e) => handleDownloadVideo(video, e)}
+      disabled={downloadingVideoId === video.id}
+      title="下载到本地"
+    >
+      <div className="action-icon-circle">
+        <svg viewBox="0 0 24 24">
+          <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+        </svg>
+      </div>
+      <span className="action-count">{downloadingVideoId === video.id ? '下载中' : '下载'}</span>
+    </button>
+  );
 
   const fetchDevDashboardData = async () => {
     const statsData = await apiFetch(`${API_PREFIX}/admin/stats`, { silent: true, timeoutMs: 15000 });
@@ -699,8 +982,20 @@ export default function App() {
     setIsLoadingProfile(false);
   };
 
+  const openMyProfile = () => {
+    if (!user?.id) {
+      showToast('请先登录', true);
+      return;
+    }
+    setNavTab('mine');
+    openUserProfile(user.id);
+  };
+
   const closeUserProfile = () => {
     setCurrentView('feed');
+    if (navTab === 'mine') {
+      setNavTab('recommend');
+    }
     setProfileUserId(null);
     setProfileUser(null);
     setProfileVideos([]);
@@ -741,13 +1036,26 @@ export default function App() {
     await fetchProfileVideos(tab, profileUserId);
   };
 
-  const handlePlayProfileVideo = (videoItem) => {
+  const startSingleVideoPlayback = (video, { queue = null, startIndex = 0 } = {}) => {
+    curatedFeedRef.current = true;
     loadingMoreFeedRef.current = false;
     setIsLoadingMoreFeed(false);
     setFeedPagination({ nextCursor: null, hasMore: false });
-    setVideos([videoItem]);
-    setCurrentIndex(0);
+    const playlist = (queue && queue.length > 0 ? queue : [video]).map(normalizeFeedVideo);
+    const safeIndex = Math.min(Math.max(startIndex, 0), playlist.length - 1);
+    setVideos(playlist);
+    setCurrentIndex(safeIndex);
     setAllViewed(false);
+    setNavTab('recommend');
+    setCurrentView('feed');
+  };
+
+  const handlePlayProfileVideo = (videoItem) => {
+    const startIndex = profileVideos.findIndex((v) => v.id === videoItem.id);
+    startSingleVideoPlayback(videoItem, {
+      queue: profileVideos,
+      startIndex: startIndex >= 0 ? startIndex : 0,
+    });
     closeUserProfile();
   };
 
@@ -804,10 +1112,7 @@ export default function App() {
     setSearchResults(null);
     setSearchQuery('');
     clearSearch();
-    setVideos([normalizeFeedVideo(video)]);
-    setCurrentIndex(0);
-    setAllViewed(false);
-    setCurrentView('feed');
+    startSingleVideoPlayback(video);
   };
 
   const fetchFriends = async () => {
@@ -953,13 +1258,18 @@ export default function App() {
       setUploadProgress(0);
       setUploadStatusMsg('');
       if (data && data.success) {
-        showToast('🎉 视频发布成功！已加入算法推荐池！');
+        showToast('🎉 视频发布成功！正在播放你刚发布的视频');
         setIsUploadOpen(false);
         setUploadTitle('');
         setUploadDesc('');
         setUploadVideo(null);
         setUploadCover(null);
-        fetchRecommendations();
+        if (data.data) {
+          startSingleVideoPlayback(data.data);
+        } else {
+          fetchRecommendations();
+        }
+        fetchMyVideos();
         if (user?.role === 'ADMIN' && currentView === 'admin') {
           fetchDevDashboardData();
         }
@@ -992,21 +1302,39 @@ export default function App() {
   };
 
   const handlePlayMyVideo = (index) => {
+    curatedFeedRef.current = true;
+    loadingMoreFeedRef.current = false;
+    setIsLoadingMoreFeed(false);
+    setFeedPagination({ nextCursor: null, hasMore: false });
     setVideos(myVideos);
     setCurrentIndex(index);
     setIsMyVideosOpen(false);
     setAllViewed(false);
+    setNavTab('recommend');
     setCurrentView('feed');
   };
 
   const handlePlayMyVideoItem = (videoItem) => {
-    loadingMoreFeedRef.current = false;
-    setIsLoadingMoreFeed(false);
-    setFeedPagination({ nextCursor: null, hasMore: false });
-    setVideos([videoItem]);
-    setCurrentIndex(0);
-    setAllViewed(false);
-    setCurrentView('feed');
+    startSingleVideoPlayback(videoItem);
+  };
+
+  const handleVideoPlaybackError = (e) => {
+    const mediaError = e?.currentTarget?.error;
+    const failedUrl = videos[currentIndex]?.video_url;
+    console.error('Video playback failed:', mediaError, failedUrl);
+
+    if (currentIndex < videos.length - 1) {
+      showToast('该视频文件在本机不存在或已损坏，已自动跳过', true);
+      setCurrentIndex(prev => prev + 1);
+      return;
+    }
+
+    showToast(
+        failedUrl?.startsWith('/uploads/')
+            ? '视频文件不在本机（数据库记录在，但 uploads 目录无文件）'
+            : '视频加载失败，请检查网络或稍后重试',
+        true
+    );
   };
 
   const togglePlayState = () => {
@@ -1435,7 +1763,7 @@ export default function App() {
                           <div className="search-page-section-title">视频</div>
                           <div className="search-page-videos">
                             {searchPageResults.videos.map(v => (
-                                <div key={v.id} className="search-video-card" onClick={() => { exitSearchPage(); setVideos([normalizeFeedVideo(v)]); setCurrentIndex(0); setAllViewed(false); setNavTab('recommend'); setCurrentView('feed'); }}>
+                                <div key={v.id} className="search-video-card" onClick={() => { exitSearchPage(); startSingleVideoPlayback(v); }}>
                                   <div className="search-video-thumb-wrap">
                                     <img src={getMediaUrl(v.cover_url)} alt={v.title} className="search-video-thumb-img" />
                                     <div className="search-video-likes">
@@ -1462,23 +1790,129 @@ export default function App() {
         )}
         <div className="webapp-body">
           <nav className="left-sidebar">
-            <button className={`sidebar-nav-item ${navTab === 'recommend' ? 'active' : ''}`} onClick={() => { setNavTab('recommend'); setCurrentView('feed'); }}>
+            <button className={`sidebar-nav-item ${navTab === 'featured' ? 'active' : ''}`} onClick={() => {
+              curatedFeedRef.current = false;
+              setCurrentView('feed');
+              if (navTab === 'featured') {
+                fetchFeaturedVideos(featuredCategory);
+              } else {
+                setNavTab('featured');
+              }
+            }}>
+              <svg viewBox="0 0 24 24"><path d="M4 6h16v2H4V6zm0 5h10v2H4v-2zm0 5h16v2H4v-2z"/></svg>
+              <span>精选</span>
+            </button>
+            <button className={`sidebar-nav-item ${navTab === 'recommend' ? 'active' : ''}`} onClick={() => {
+              curatedFeedRef.current = false;
+              setCurrentView('feed');
+              if (navTab === 'recommend') {
+                setVideos([]);
+                setCurrentIndex(0);
+                setAllViewed(false);
+                setFeedPagination({ nextCursor: null, hasMore: false });
+                fetchRecommendations();
+              } else {
+                setNavTab('recommend');
+              }
+            }}>
               <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
               <span>推荐</span>
             </button>
-            <button className={`sidebar-nav-item ${navTab === 'following' ? 'active' : ''}`} onClick={() => { setNavTab('following'); setCurrentView('feed'); }}>
+            <button className={`sidebar-nav-item ${navTab === 'following' ? 'active' : ''}`} onClick={() => { curatedFeedRef.current = false; setNavTab('following'); setCurrentView('feed'); }}>
               <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
               <span>关注</span>
             </button>
-            <button className={`sidebar-nav-item ${navTab === 'friends' ? 'active' : ''}`} onClick={() => { setNavTab('friends'); setCurrentView('feed'); }}>
+            <button className={`sidebar-nav-item ${navTab === 'friends' ? 'active' : ''}`} onClick={() => { curatedFeedRef.current = false; setNavTab('friends'); setCurrentView('feed'); }}>
               <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
               <span>朋友</span>
+            </button>
+            <button className={`sidebar-nav-item ${navTab === 'mine' ? 'active' : ''}`} onClick={openMyProfile}>
+              <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+              <span>我的</span>
             </button>
           </nav>
           <div className="webapp-main">
 
             {currentView === 'feed' && (
                 <>
+                  {/* 精选页：分类栏 + 多列网格 */}
+                  {navTab === 'featured' && (
+                      <main className="featured-main">
+                        <div className="featured-category-bar-wrap">
+                          <button type="button" className="featured-category-scroll-btn" onClick={() => scrollFeaturedCategories(-1)} aria-label="向左滚动分类">
+                            <svg viewBox="0 0 24 24"><path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6z"/></svg>
+                          </button>
+                          <div className="featured-category-bar" ref={categoryBarRef}>
+                            {FEATURED_CATEGORIES.map((cat) => (
+                                <button
+                                    key={cat.id}
+                                    type="button"
+                                    className={`featured-category-item ${featuredCategory === cat.id ? 'active' : ''}`}
+                                    onClick={() => switchFeaturedCategory(cat.id)}
+                                >
+                                  {cat.label}
+                                </button>
+                            ))}
+                          </div>
+                          <button type="button" className="featured-category-scroll-btn" onClick={() => scrollFeaturedCategories(1)} aria-label="向右滚动分类">
+                            <svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
+                          </button>
+                        </div>
+
+                        <div className="featured-grid-scroll">
+                          {isLoadingFeatured && featuredVideos.length === 0 ? (
+                              <div className="featured-loading">
+                                <div className="loading-spinner" />
+                                <p>精选内容加载中...</p>
+                              </div>
+                          ) : featuredVideos.length > 0 ? (
+                              <>
+                                <div className="featured-video-grid">
+                                  {featuredVideos.map((fv, idx) => (
+                                      <article
+                                          key={`featured-${fv.id}`}
+                                          className="featured-video-card"
+                                          onClick={() => handlePlayFeaturedVideo(fv, idx)}
+                                      >
+                                        <div className="featured-video-thumb">
+                                          <img src={getMediaUrl(fv.cover_url)} alt={fv.title} loading="lazy" />
+                                          <div className="featured-video-likes">
+                                            <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                                            <span>{formatLikeCount(fv.likeCount ?? fv.likes_count ?? 0)}</span>
+                                          </div>
+                                          <div className="featured-video-duration">{estimateVideoDuration(fv)}</div>
+                                        </div>
+                                        <h3 className="featured-video-title">{fv.title}</h3>
+                                        <div className="featured-video-meta">
+                                          <span>@{fv.creator_name || '创作者'}</span>
+                                          <span className="featured-video-dot">·</span>
+                                          <span>{formatRelativeTime(fv.created_at)}</span>
+                                        </div>
+                                      </article>
+                                  ))}
+                                </div>
+                                {featuredCategory === 'all' && (
+                                    <div className="featured-load-more">
+                                      <button
+                                          type="button"
+                                          disabled={!featuredPagination.hasMore || isLoadingFeatured}
+                                          onClick={() => fetchFeaturedVideos(featuredCategory, featuredPagination.nextCursor, true)}
+                                      >
+                                        {isLoadingFeatured ? '加载中...' : featuredPagination.hasMore ? '加载更多' : '没有更多了'}
+                                      </button>
+                                    </div>
+                                )}
+                              </>
+                          ) : (
+                              <div className="featured-empty">
+                                <p>该分类下暂无可播放视频</p>
+                                <button type="button" className="reset-views-btn" onClick={() => switchFeaturedCategory('all')}>查看全部精选</button>
+                              </div>
+                          )}
+                        </div>
+                      </main>
+                  )}
+
                   {/* 关注页：左侧用户列表 + 右侧视频 */}
                   {navTab === 'following' && (
                       <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
@@ -1527,7 +1961,7 @@ export default function App() {
                                 <div className={`web-video-wrapper ${isVideoZoomed ? 'is-zoomed' : ''}`} onClick={togglePlayState}>
                                   <video ref={videoRef} className={`web-video-player ${isVideoZoomed ? 'is-zoomed' : ''}`} loop muted={isMuted} preload="metadata" playsInline
                                          src={getMediaUrl(activeVideo.video_url)} poster={activeVideo.cover_url ? getMediaUrl(activeVideo.cover_url) : undefined}
-                                         onTimeUpdate={handleVideoTimeUpdate} onLoadedMetadata={handleVideoLoadedMetadata} />
+                                         onTimeUpdate={handleVideoTimeUpdate} onLoadedMetadata={handleVideoLoadedMetadata} onError={handleVideoPlaybackError} />
                                   <div className="video-play-overlay">{playTriggerAnim && <div className="play-pause-icon-anim">{isPlaying ? <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg> : <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>}</div>}</div>
                                   <button className="web-mute-button" onClick={toggleMuted}>{isMuted ? <svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.62 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73L16.25 17.52c-.67.52-1.43.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg> : <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>}</button>
                                   <button className="web-zoom-button" onClick={toggleVideoZoom}>
@@ -1589,6 +2023,7 @@ export default function App() {
                                     <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
                                     <span className="action-count">转发</span>
                                   </button>
+                                  {renderDownloadButton(activeVideo)}
                                   <button className="action-item-button special-action" onClick={openMyVideosPanel}>
                                     <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z"/></svg></div>
                                     <span className="action-count">我的作品</span>
@@ -1624,7 +2059,7 @@ export default function App() {
                   )}
 
                   {/* 推荐页 */}
-                  {navTab !== 'friends' && navTab !== 'following' && (
+                  {navTab === 'recommend' && (
                       <main className="web-feed-main">
                         {isLoadingFeed ? (
                             <div className="web-feed-center"><div className="loading-spinner" /><p>算法组装中...</p></div>
@@ -1641,7 +2076,7 @@ export default function App() {
                               <div className={`web-video-wrapper ${isVideoZoomed ? 'is-zoomed' : ''}`} onClick={togglePlayState}>
                                 <video ref={videoRef} className={`web-video-player ${isVideoZoomed ? 'is-zoomed' : ''}`} loop muted={isMuted} preload="metadata" playsInline
                                        src={getMediaUrl(activeVideo.video_url)} poster={activeVideo.cover_url ? getMediaUrl(activeVideo.cover_url) : undefined}
-                                       onTimeUpdate={handleVideoTimeUpdate} onLoadedMetadata={handleVideoLoadedMetadata} />
+                                       onTimeUpdate={handleVideoTimeUpdate} onLoadedMetadata={handleVideoLoadedMetadata} onError={handleVideoPlaybackError} />
                                 <div className="video-play-overlay">{playTriggerAnim && <div className="play-pause-icon-anim">{isPlaying ? <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg> : <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>}</div>}</div>
                                 <button className="web-mute-button" onClick={toggleMuted}>{isMuted ? <svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.62 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73L16.25 17.52c-.67.52-1.43.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg> : <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>}</button>
                                 <button className="web-zoom-button" onClick={toggleVideoZoom}>
@@ -1704,6 +2139,7 @@ export default function App() {
                                   <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
                                   <span className="action-count">转发</span>
                                 </button>
+                                {renderDownloadButton(activeVideo)}
                                 <button className="action-item-button special-action" onClick={openMyVideosPanel}>
                                   <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z"/></svg></div>
                                   <span className="action-count">我的作品</span>
@@ -1787,7 +2223,7 @@ export default function App() {
                                 <div className={`web-video-wrapper ${isVideoZoomed ? 'is-zoomed' : ''}`} onClick={togglePlayState}>
                                   <video ref={videoRef} className={`web-video-player ${isVideoZoomed ? 'is-zoomed' : ''}`} loop muted={isMuted} preload="metadata" playsInline
                                          src={getMediaUrl(activeVideo.video_url)} poster={activeVideo.cover_url ? getMediaUrl(activeVideo.cover_url) : undefined}
-                                         onTimeUpdate={handleVideoTimeUpdate} onLoadedMetadata={handleVideoLoadedMetadata} />
+                                         onTimeUpdate={handleVideoTimeUpdate} onLoadedMetadata={handleVideoLoadedMetadata} onError={handleVideoPlaybackError} />
                                   <div className="video-play-overlay">{playTriggerAnim && <div className="play-pause-icon-anim">{isPlaying ? <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg> : <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>}</div>}</div>
                                   <button className="web-mute-button" onClick={toggleMuted}>{isMuted ? <svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.62 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73L16.25 17.52c-.67.52-1.43.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg> : <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>}</button>
                                   <button className="web-zoom-button" onClick={toggleVideoZoom}>
@@ -1848,6 +2284,7 @@ export default function App() {
                                     <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
                                     <span className="action-count">转发</span>
                                   </button>
+                                  {renderDownloadButton(activeVideo)}
                                   <button className="action-item-button special-action" onClick={openMyVideosPanel}>
                                     <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z"/></svg></div>
                                     <span className="action-count">我的作品</span>
