@@ -1308,7 +1308,12 @@ export default function App() {
                             <div className="search-section">
                               <div className="search-section-title">用户</div>
                               {searchResults.users.map(u => (
-                                  <div key={u.id} className="search-result-item" onClick={clearSearch}>
+                                  <div
+                                      key={u.id}
+                                      className="search-result-item clickable-profile"
+                                      onClick={() => { clearSearch(); openUserProfile(u.id); }}
+                                      style={{ cursor: 'pointer' }}
+                                  >
                                     <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${u.username}`} alt="" className="search-avatar" />
                                     <div className="search-item-info">
                                       <div className="search-item-name">@{u.username}</div>
@@ -1402,7 +1407,12 @@ export default function App() {
                           <div className="search-page-section-title">用户</div>
                           <div className="search-page-users">
                             {searchPageResults.users.map(u => (
-                                <div key={u.id} className="search-user-card">
+                                <div
+                                    key={u.id}
+                                    className="search-user-card clickable-profile"
+                                    onClick={() => { exitSearchPage(); openUserProfile(u.id); }}
+                                    style={{ cursor: 'pointer' }}
+                                >
                                   <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${u.username}`} alt="" className="search-user-avatar" />
                                   <div className="search-user-info">
                                     <div className="search-user-name">@{u.username}</div>
@@ -1410,7 +1420,7 @@ export default function App() {
                                   </div>
                                   <button
                                       className={`search-follow-btn ${followMap[u.id]?.isFollowing ? 'following' : ''}`}
-                                      onClick={(e) => handleFollowToggle(u.id, e)}
+                                      onClick={(e) => { e.stopPropagation(); handleFollowToggle(u.id, e); }}
                                   >
                                     {followMap[u.id]?.isFollowing ? '已关注' : '+ 关注'}
                                   </button>
@@ -1491,7 +1501,11 @@ export default function App() {
                                 <div style={{ minWidth: 0, flex: 1 }}>
                                   <div style={{ fontSize: 14, fontWeight: 600, color: selectedFollowingUser?.id === u.id ? 'var(--primary-cyan)' : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{u.username}</div>
                                   {u.displayName && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.displayName}</div>}
-                                  {u.isFriend && <div style={{ fontSize: 10, color: 'var(--primary-pink)', marginTop: 2 }}>♥ 好友</div>}
+                                  {u.isFriend ? (
+                                      <div style={{ fontSize: 10, color: 'var(--primary-pink)', marginTop: 2 }}>♥ 好友</div>
+                                  ) : (
+                                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>✓ 已关注</div>
+                                  )}
                                 </div>
                               </div>
                           )) : (
@@ -1520,7 +1534,14 @@ export default function App() {
                                     {isVideoZoomed ? <svg viewBox="0 0 24 24"><path d="M5 14h2v3h3v2H5v-5zm12 3v-3h2v5h-5v-2h3zM7 7v3H5V5h5v2H7zm12 3h-2V7h-3V5h5v5z"/></svg> : <svg viewBox="0 0 24 24"><path d="M15 3h6v6h-2V6.41l-4.29 4.3-1.42-1.42 4.3-4.29H15V3zM9 21H3v-6h2v2.59l4.29-4.3 1.42 1.42-4.3 4.29H9V21zm12 0h-6v-2h2.59l-4.3-4.29 1.42-1.42 4.29 4.3V15h2v6zM3 9V3h6v2H6.41l4.3 4.29-1.42 1.42-4.29-4.3V9H3z"/></svg>}
                                   </button>
                                   <div className="web-video-meta">
-                                    <div className="creator-handle">@{activeVideo.creator_name || '未知创作者'}{activeVideo.user_id === user?.id && <span className="my-publish-badge">我的发布</span>}</div>
+                                    <div
+                                        className="creator-handle clickable-profile"
+                                        onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
+                                        title="进入作者主页"
+                                    >
+                                      @{activeVideo.creator_name || '未知创作者'}
+                                      {activeVideo.user_id === user?.id && <span className="my-publish-badge">我的发布</span>}
+                                    </div>
                                     <div className="video-caption">{activeVideo.title}{activeVideo.description && ` — ${activeVideo.description}`}</div>
                                     <div className="video-hashtags">#智能算法推荐 #SpringBoot #React</div>
                                   </div>
@@ -1534,8 +1555,14 @@ export default function App() {
                                 </div>
 
                                 <div className="web-action-bar">
-                                  <div className="sidebar-avatar-wrapper">
-                                    <div className="sidebar-avatar"><img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${activeVideo.creator_name}`} alt="avatar" /></div>
+                                  <div
+                                      className="sidebar-avatar-wrapper clickable-profile"
+                                      onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
+                                      title="进入作者主页"
+                                  >
+                                    <div className="sidebar-avatar">
+                                      <img src={getAvatarUrl(activeVideo.creator_name)} alt="avatar" />
+                                    </div>
                                     {activeVideo.user_id !== user?.id && (
                                         <button className={`follow-badge-btn ${isFollowingCreator ? (isFriendWithCreator ? 'is-friend' : 'is-following') : ''}`} onClick={(e) => handleFollowToggle(activeVideo.user_id, e)} title={isFollowingCreator ? (isFriendWithCreator ? '好友' : '取关') : '关注'}>
                                           {isFollowingCreator ? (isFriendWithCreator ? '♥' : '✓') : '+'}
@@ -1545,6 +1572,18 @@ export default function App() {
                                   <button className={`action-item-button ${activeVideo.liked ? 'liked' : ''} ${likingVideoId === activeVideo.id ? 'is-loading' : ''}`} onClick={(e) => handleToggleLike(activeVideo.id, e)} disabled={likingVideoId === activeVideo.id}>
                                     <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
                                     <span className="action-count">{activeVideo.likeCount ?? 0}</span>
+                                  </button>
+                                  <button
+                                      className="action-item-button special-action"
+                                      onClick={(e) => { e.stopPropagation(); openCommentsPanel(activeVideo.id); }}
+                                      title="查看评论"
+                                  >
+                                    <div className="action-icon-circle">
+                                      <svg viewBox="0 0 24 24">
+                                        <path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z" />
+                                      </svg>
+                                    </div>
+                                    <span className="action-count">{activeVideo.commentCount ?? activeVideo.comments_count ?? 0}</span>
                                   </button>
                                   <button className="action-item-button special-action" onClick={(e) => { e.stopPropagation(); openSharePanel(activeVideo.id); }}>
                                     <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
@@ -1584,7 +1623,7 @@ export default function App() {
                       </div>
                   )}
 
-                  {/* 推荐页和好友页 */}
+                  {/* 推荐页 */}
                   {navTab !== 'friends' && navTab !== 'following' && (
                       <main className="web-feed-main">
                         {isLoadingFeed ? (
@@ -1609,7 +1648,14 @@ export default function App() {
                                   {isVideoZoomed ? <svg viewBox="0 0 24 24"><path d="M5 14h2v3h3v2H5v-5zm12 3v-3h2v5h-5v-2h3zM7 7v3H5V5h5v2H7zm12 3h-2V7h-3V5h5v5z"/></svg> : <svg viewBox="0 0 24 24"><path d="M15 3h6v6h-2V6.41l-4.29 4.3-1.42-1.42 4.3-4.29H15V3zM9 21H3v-6h2v2.59l4.29-4.3 1.42 1.42-4.3 4.29H9V21zm12 0h-6v-2h2.59l-4.3-4.29 1.42-1.42 4.29 4.3V15h2v6zM3 9V3h6v2H6.41l4.3 4.29-1.42 1.42-4.29-4.3V9H3z"/></svg>}
                                 </button>
                                 <div className="web-video-meta">
-                                  <div className="creator-handle">@{activeVideo.creator_name || '未知创作者'}{activeVideo.user_id === user?.id && <span className="my-publish-badge">我的发布</span>}</div>
+                                  <div
+                                      className="creator-handle clickable-profile"
+                                      onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
+                                      title="进入作者主页"
+                                  >
+                                    @{activeVideo.creator_name || '未知创作者'}
+                                    {activeVideo.user_id === user?.id && <span className="my-publish-badge">我的发布</span>}
+                                  </div>
                                   <div className="video-caption">{activeVideo.title}{activeVideo.description && ` — ${activeVideo.description}`}</div>
                                   <div className="video-hashtags">#智能算法推荐 #SpringBoot #React</div>
                                 </div>
@@ -1623,8 +1669,15 @@ export default function App() {
                               </div>
 
                               <div className="web-action-bar">
-                                <div className="sidebar-avatar-wrapper">
-                                  <div className="sidebar-avatar"><img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${activeVideo.creator_name}`} alt="avatar" /></div>
+                                {/* 动作按钮内容 */}
+                                <div
+                                    className="sidebar-avatar-wrapper clickable-profile"
+                                    onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
+                                    title="进入作者主页"
+                                >
+                                  <div className="sidebar-avatar">
+                                    <img src={getAvatarUrl(activeVideo.creator_name)} alt="avatar" />
+                                  </div>
                                   {activeVideo.user_id !== user?.id && (
                                       <button className={`follow-badge-btn ${isFollowingCreator ? (isFriendWithCreator ? 'is-friend' : 'is-following') : ''}`} onClick={(e) => handleFollowToggle(activeVideo.user_id, e)} title={isFollowingCreator ? (isFriendWithCreator ? '好友' : '取关') : '关注'}>
                                         {isFollowingCreator ? (isFriendWithCreator ? '♥' : '✓') : '+'}
@@ -1634,6 +1687,18 @@ export default function App() {
                                 <button className={`action-item-button ${activeVideo.liked ? 'liked' : ''} ${likingVideoId === activeVideo.id ? 'is-loading' : ''}`} onClick={(e) => handleToggleLike(activeVideo.id, e)} disabled={likingVideoId === activeVideo.id}>
                                   <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
                                   <span className="action-count">{activeVideo.likeCount ?? 0}</span>
+                                </button>
+                                <button
+                                    className="action-item-button special-action"
+                                    onClick={(e) => { e.stopPropagation(); openCommentsPanel(activeVideo.id); }}
+                                    title="查看评论"
+                                >
+                                  <div className="action-icon-circle">
+                                    <svg viewBox="0 0 24 24">
+                                      <path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z" />
+                                    </svg>
+                                  </div>
+                                  <span className="action-count">{activeVideo.commentCount ?? activeVideo.comments_count ?? 0}</span>
                                 </button>
                                 <button className="action-item-button special-action" onClick={(e) => { e.stopPropagation(); openSharePanel(activeVideo.id); }}>
                                   <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
@@ -1652,137 +1717,6 @@ export default function App() {
                                   <span className="action-count">分享给我</span>
                                 </button>
                               </div>
-        {/* ============================================== */}
-        {/* VIEW: USER PROFILE PAGE                         */}
-        {/* ============================================== */}
-        {currentView === 'profile' && (
-            <main className="user-profile-page">
-              <div className="profile-top-bar">
-                <button className="profile-back-btn" onClick={closeUserProfile} title="返回推荐">
-                  <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" /></svg>
-                  返回
-                </button>
-              </div>
-
-              {isLoadingProfile && !profileUser ? (
-                  <div className="profile-loading">
-                    <div className="loading-spinner" />
-                    <p>加载用户资料...</p>
-                  </div>
-              ) : profileUser ? (
-                  <>
-                    <div className="profile-header">
-                      <div className="profile-avatar-large">
-                        <img src={getAvatarUrl(profileUser)} alt={profileUser.username} />
-                      </div>
-                      <div className="profile-info">
-                        <h2>@{profileUser.username}</h2>
-                        <div className="profile-id">用户 ID：{profileUser.id}</div>
-                        {profileUser.displayName && (
-                            <div className="profile-display-name">{profileUser.displayName}</div>
-                        )}
-                        <div className="profile-stats">
-                          <span className="profile-stat-item">
-                            <strong>{profileUser.totalLikesReceived ?? 0}</strong> 获赞
-                          </span>
-                          <span className="profile-stat-item">
-                            <strong>{profileUser.publishedVideoCount ?? 0}</strong> 作品
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="profile-tabs">
-                      <button
-                          className={`profile-tab ${profileTab === 'published' ? 'active' : ''}`}
-                          onClick={() => switchProfileTab('published')}
-                      >
-                        发布的视频
-                      </button>
-                      <button
-                          className={`profile-tab ${profileTab === 'liked' ? 'active' : ''}`}
-                          onClick={() => switchProfileTab('liked')}
-                      >
-                        点赞的视频
-                      </button>
-                    </div>
-
-                    <div className="profile-videos-section">
-                      {profileVideos.length > 0 ? (
-                          <div className="my-videos-grid web-modal-grid profile-video-grid">
-                            {profileVideos.map((pv) => (
-                                <div
-                                    key={`profile-${profileTab}-${pv.id}`}
-                                    className="grid-video-card"
-                                    onClick={() => handlePlayProfileVideo(pv)}
-                                >
-                                  <img
-                                      className="grid-video-cover"
-                                      src={getMediaUrl(pv.cover_url)}
-                                      alt={pv.title}
-                                  />
-                                  <div className="grid-video-info">
-                                    <svg viewBox="0 0 24 24">
-                                      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                                    </svg>
-                                    <span>{pv.likeCount ?? pv.likes_count ?? 0}</span>
-                                  </div>
-                                </div>
-                            ))}
-                          </div>
-                      ) : (
-                          <div className="profile-videos-empty">
-                            <p>{profileTab === 'published' ? '该用户还没有发布视频' : '该用户还没有点赞任何视频'}</p>
-                          </div>
-                      )}
-
-                      <div className="my-videos-pagination profile-pagination">
-                        <button onClick={() => fetchProfileVideos(profileTab, profileUserId)}>
-                          刷新
-                        </button>
-                        <span>{profileVideosPagination.hasMore ? '还有更多' : '已加载全部'}</span>
-                        <button
-                            disabled={!profileVideosPagination.hasMore}
-                            onClick={() => fetchProfileVideos(
-                                profileTab,
-                                profileUserId,
-                                profileVideosPagination.nextCursor,
-                                true
-                            )}
-                        >
-                          加载更多
-                        </button>
-                      </div>
-                    </div>
-                  </>
-              ) : (
-                  <div className="profile-loading">
-                    <p>用户不存在或无法加载</p>
-                    <button className="reset-views-btn" onClick={closeUserProfile}>返回推荐</button>
-                  </div>
-              )}
-            </main>
-        )}
-
-        {/* ============================================== */}
-        {/* VIEW 2: ADMIN MONITORING CONSOLE (仅管理员)      */}
-        {/* ============================================== */}
-        {currentView === 'admin' && isAdmin && (
-            <main className="admin-page-main">
-              <section className="dev-console-panel admin-fullpage">
-
-                <div className="console-title-bar">
-                  <h2>
-                    <svg viewBox="0 0 24 24">
-                      <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-4 6h-4v2h4v2h-4v2h4v2H9V7h6v2z" />
-                    </svg>
-                    抖音 API 开发者监控面板
-                  </h2>
-                  <div className="live-badge">
-                    <span className="blink-dot" />
-                    Live Connected
-                  </div>
-                </div>
 
                               <div className="web-nav-arrows">
                                 <button className="arrow-nav-btn" onClick={handlePrevVideo} disabled={currentIndex === 0}>
@@ -1860,7 +1794,14 @@ export default function App() {
                                     {isVideoZoomed ? <svg viewBox="0 0 24 24"><path d="M5 14h2v3h3v2H5v-5zm12 3v-3h2v5h-5v-2h3zM7 7v3H5V5h5v2H7zm12 3h-2V7h-3V5h5v5z"/></svg> : <svg viewBox="0 0 24 24"><path d="M15 3h6v6h-2V6.41l-4.29 4.3-1.42-1.42 4.3-4.29H15V3zM9 21H3v-6h2v2.59l4.29-4.3 1.42 1.42-4.3 4.29H9V21zm12 0h-6v-2h2.59l-4.3-4.29 1.42-1.42 4.29 4.3V15h2v6zM3 9V3h6v2H6.41l4.3 4.29-1.42 1.42-4.29-4.3V9H3z"/></svg>}
                                   </button>
                                   <div className="web-video-meta">
-                                    <div className="creator-handle">@{activeVideo.creator_name || '未知创作者'}{activeVideo.user_id === user?.id && <span className="my-publish-badge">我的发布</span>}</div>
+                                    <div
+                                        className="creator-handle clickable-profile"
+                                        onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
+                                        title="进入作者主页"
+                                    >
+                                      @{activeVideo.creator_name || '未知创作者'}
+                                      {activeVideo.user_id === user?.id && <span className="my-publish-badge">我的发布</span>}
+                                    </div>
                                     <div className="video-caption">{activeVideo.title}{activeVideo.description && ` — ${activeVideo.description}`}</div>
                                     <div className="video-hashtags">#智能算法推荐 #SpringBoot #React</div>
                                   </div>
@@ -1873,8 +1814,14 @@ export default function App() {
                                   </div>
                                 </div>
                                 <div className="web-action-bar">
-                                  <div className="sidebar-avatar-wrapper">
-                                    <div className="sidebar-avatar"><img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${activeVideo.creator_name}`} alt="avatar" /></div>
+                                  <div
+                                      className="sidebar-avatar-wrapper clickable-profile"
+                                      onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
+                                      title="进入作者主页"
+                                  >
+                                    <div className="sidebar-avatar">
+                                      <img src={getAvatarUrl(activeVideo.creator_name)} alt="avatar" />
+                                    </div>
                                     {activeVideo.user_id !== user?.id && (
                                         <button className={`follow-badge-btn ${isFollowingCreator ? (isFriendWithCreator ? 'is-friend' : 'is-following') : ''}`} onClick={(e) => handleFollowToggle(activeVideo.user_id, e)} title={isFollowingCreator ? (isFriendWithCreator ? '好友' : '取关') : '关注'}>
                                           {isFollowingCreator ? (isFriendWithCreator ? '♥' : '✓') : '+'}
@@ -1884,6 +1831,18 @@ export default function App() {
                                   <button className={`action-item-button ${activeVideo.liked ? 'liked' : ''} ${likingVideoId === activeVideo.id ? 'is-loading' : ''}`} onClick={(e) => handleToggleLike(activeVideo.id, e)} disabled={likingVideoId === activeVideo.id}>
                                     <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
                                     <span className="action-count">{activeVideo.likeCount ?? 0}</span>
+                                  </button>
+                                  <button
+                                      className="action-item-button special-action"
+                                      onClick={(e) => { e.stopPropagation(); openCommentsPanel(activeVideo.id); }}
+                                      title="查看评论"
+                                  >
+                                    <div className="action-icon-circle">
+                                      <svg viewBox="0 0 24 24">
+                                        <path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z" />
+                                      </svg>
+                                    </div>
+                                    <span className="action-count">{activeVideo.commentCount ?? activeVideo.comments_count ?? 0}</span>
                                   </button>
                                   <button className="action-item-button special-action" onClick={(e) => { e.stopPropagation(); openSharePanel(activeVideo.id); }}>
                                     <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
@@ -1915,6 +1874,115 @@ export default function App() {
                       </div>
                   )}
                 </>
+            )}
+            {/* 用户主页 */}
+            {currentView === 'profile' && (
+                <main className="user-profile-page">
+                  <div className="profile-top-bar">
+                    <button className="profile-back-btn" onClick={closeUserProfile} title="返回推荐">
+                      <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" /></svg>
+                      返回
+                    </button>
+                  </div>
+
+                  {isLoadingProfile && !profileUser ? (
+                      <div className="profile-loading">
+                        <div className="loading-spinner" />
+                        <p>加载用户资料...</p>
+                      </div>
+                  ) : profileUser ? (
+                      <>
+                        <div className="profile-header">
+                          <div className="profile-avatar-large">
+                            <img src={getAvatarUrl(profileUser)} alt={profileUser.username} />
+                          </div>
+                          <div className="profile-info">
+                            <h2>@{profileUser.username}</h2>
+                            <div className="profile-id">用户 ID：{profileUser.id}</div>
+                            {profileUser.displayName && (
+                                <div className="profile-display-name">{profileUser.displayName}</div>
+                            )}
+                            <div className="profile-stats">
+                              <span className="profile-stat-item">
+                                <strong>{profileUser.totalLikesReceived ?? 0}</strong> 获赞
+                              </span>
+                              <span className="profile-stat-item">
+                                <strong>{profileUser.publishedVideoCount ?? 0}</strong> 作品
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="profile-tabs">
+                          <button
+                              className={`profile-tab ${profileTab === 'published' ? 'active' : ''}`}
+                              onClick={() => switchProfileTab('published')}
+                          >
+                            发布的视频
+                          </button>
+                          <button
+                              className={`profile-tab ${profileTab === 'liked' ? 'active' : ''}`}
+                              onClick={() => switchProfileTab('liked')}
+                          >
+                            点赞的视频
+                          </button>
+                        </div>
+
+                        <div className="profile-videos-section">
+                          {profileVideos.length > 0 ? (
+                              <div className="my-videos-grid web-modal-grid profile-video-grid">
+                                {profileVideos.map((pv) => (
+                                    <div
+                                        key={`profile-${profileTab}-${pv.id}`}
+                                        className="grid-video-card"
+                                        onClick={() => handlePlayProfileVideo(pv)}
+                                    >
+                                      <img
+                                          className="grid-video-cover"
+                                          src={getMediaUrl(pv.cover_url)}
+                                          alt={pv.title}
+                                      />
+                                      <div className="grid-video-info">
+                                        <svg viewBox="0 0 24 24">
+                                          <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                                        </svg>
+                                        <span>{pv.likeCount ?? pv.likes_count ?? 0}</span>
+                                      </div>
+                                    </div>
+                                ))}
+                              </div>
+                          ) : (
+                              <div className="profile-videos-empty">
+                                <p>{profileTab === 'published' ? '该用户还没有发布视频' : '该用户还没有点赞任何视频'}</p>
+                              </div>
+                          )}
+
+                          <div className="my-videos-pagination profile-pagination">
+                            <button onClick={() => fetchProfileVideos(profileTab, profileUserId)}>
+                              刷新
+                            </button>
+                            <span>{profileVideosPagination.hasMore ? '还有更多' : '已加载全部'}</span>
+                            <button
+                                disabled={!profileVideosPagination.hasMore}
+                                onClick={() => fetchProfileVideos(
+                                    profileTab,
+                                    profileUserId,
+                                    profileVideosPagination.nextCursor,
+                                    true
+                                )}
+                            >
+                              加载更多
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                  ) : (
+                      <div className="profile-loading">
+                        <p>用户不存在或无法加载</p>
+                        <button className="reset-views-btn" onClick={closeUserProfile}>返回推荐</button>
+                      </div>
+                  )}
+                </main>
             )}
 
             {currentView === 'admin' && isAdmin && (
