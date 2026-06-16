@@ -108,6 +108,7 @@ export default function App() {
   const [feedPagination, setFeedPagination] = useState({ nextCursor: null, hasMore: false });
   const [playTriggerAnim, setPlayTriggerAnim] = useState(false);
   const [likingVideoId, setLikingVideoId] = useState(null);
+  const [favoritingVideoId, setFavoritingVideoId] = useState(null);
   const [downloadingVideoId, setDownloadingVideoId] = useState(null);
   const [isVideoZoomed, setIsVideoZoomed] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
@@ -363,15 +364,22 @@ export default function App() {
     const liked = typeof video.liked === 'boolean' ? video.liked : (video.is_liked === 1 || video.is_liked === true);
     const likeCount = video.likeCount ?? video.likes_count ?? video.likesCount ?? 0;
     const commentCount = video.commentCount ?? video.comments_count ?? 0;
+    const favorited = typeof video.favorited === 'boolean' ? video.favorited : (video.is_favorited === 1 || video.is_favorited === true);
+    const favoriteCount = video.favoriteCount ?? video.favorites_count ?? video.favoritesCount ?? 0;
     return {
       ...video,
       liked,
       likeCount,
       commentCount,
+      favorited,
+      favoriteCount,
       comments_count: commentCount,
       is_liked: liked ? 1 : 0,
       likes_count: likeCount,
       likesCount: likeCount,
+      is_favorited: favorited ? 1 : 0,
+      favorites_count: favoriteCount,
+      favoritesCount: favoriteCount,
     };
   };
 
@@ -388,6 +396,15 @@ export default function App() {
       if (v.id !== videoId) return v;
       return normalizeFeedVideo({ ...v, liked, likeCount });
     }));
+  };
+
+  const updateVideoFavoriteState = (videoId, favorited, favoriteCount) => {
+    const patch = (v) => v.id === videoId
+        ? normalizeFeedVideo({ ...v, favorited, favoriteCount })
+        : v;
+    setVideos(prev => prev.map(patch));
+    setMyVideos(prev => prev.map(patch));
+    setProfileVideos(prev => prev.map(patch));
   };
 
   const updateVideoCommentCount = (videoId, commentCount) => {
@@ -629,6 +646,34 @@ export default function App() {
       showToast(liked ? '已点赞' : '已取消点赞');
     } else {
       showToast(data.message || '点赞操作失败', true);
+    }
+  };
+
+  const handleToggleFavorite = async (videoId, e) => {
+    e?.stopPropagation();
+    if (!token) {
+      showToast('请先登录后再收藏', true);
+      return;
+    }
+    if (favoritingVideoId === videoId) {
+      return;
+    }
+    setFavoritingVideoId(videoId);
+    const data = await apiFetch(`${API_PREFIX}/videos/${videoId}/favorite`, { method: 'PUT' });
+    setFavoritingVideoId(null);
+    if (!data) return;
+    if (data.success) {
+      const favorited = Boolean(data.favorited);
+      const favoriteCount = data.favoriteCount ?? data.favorites_count ?? 0;
+      updateVideoFavoriteState(videoId, favorited, favoriteCount);
+      showToast(favorited ? '已收藏' : '已取消收藏');
+      if (currentView === 'profile' && profileUserId === user?.id && profileTab === 'favorited') {
+        if (!favorited) {
+          setProfileVideos(prev => prev.filter(v => v.id !== videoId));
+        }
+      }
+    } else {
+      showToast(data.message || '收藏操作失败', true);
     }
   };
 
@@ -999,6 +1044,8 @@ export default function App() {
     if (navTab === 'mine') {
       setNavTab('recommend');
     }
+    setBatchManageMode(false);
+    setSelectedVideoIds(new Set());
     setProfileUserId(null);
     setProfileUser(null);
     setProfileVideos([]);
@@ -1016,9 +1063,12 @@ export default function App() {
   const fetchProfileVideos = async (tab, userId, cursor = null, append = false) => {
     const targetId = userId ?? profileUserId;
     if (!targetId) return;
-    const endpoint = tab === 'liked'
-        ? `${API_PREFIX}/users/${targetId}/liked-videos`
-        : `${API_PREFIX}/users/${targetId}/videos`;
+    let endpoint = `${API_PREFIX}/users/${targetId}/videos`;
+    if (tab === 'liked') {
+      endpoint = `${API_PREFIX}/users/${targetId}/liked-videos`;
+    } else if (tab === 'favorited') {
+      endpoint = `${API_PREFIX}/users/${targetId}/favorited-videos`;
+    }
     const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
     const data = await apiFetch(`${endpoint}?limit=8${cursorParam}`);
     if (data && data.success) {
@@ -1033,6 +1083,8 @@ export default function App() {
 
   const switchProfileTab = async (tab) => {
     if (tab === profileTab) return;
+    setBatchManageMode(false);
+    setSelectedVideoIds(new Set());
     setProfileTab(tab);
     setProfileVideos([]);
     setProfileVideosPagination({ nextCursor: null, hasMore: false });
@@ -1296,6 +1348,9 @@ export default function App() {
     if (data && data.success) {
       showToast('视频已成功下架！');
       fetchMyVideos();
+      if (currentView === 'profile' && profileUserId === user?.id) {
+        fetchProfileVideos('published', profileUserId);
+      }
       fetchRecommendations();
       if (user?.role === 'ADMIN' && currentView === 'admin') {
         fetchDevDashboardData();
@@ -1325,8 +1380,11 @@ export default function App() {
   };
 
   const selectAllVideos = () => {
-    if (myVideos.length === 0) return;
-    const allIds = new Set(myVideos.map(v => v.id));
+    const targetVideos = (currentView === 'profile' && profileUserId === user?.id && profileTab === 'published')
+      ? profileVideos
+      : myVideos;
+    if (targetVideos.length === 0) return;
+    const allIds = new Set(targetVideos.map(v => v.id));
     if (selectedVideoIds.size === allIds.size) {
       setSelectedVideoIds(new Set());
     } else {
@@ -1348,7 +1406,11 @@ export default function App() {
       showToast(`成功删除 ${ids.length} 个视频`);
       setBatchManageMode(false);
       setSelectedVideoIds(new Set());
-      fetchMyVideos();
+      if (currentView === 'profile' && profileUserId === user?.id) {
+        fetchProfileVideos('published', profileUserId);
+      } else {
+        fetchMyVideos();
+      }
       fetchRecommendations();
       if (user?.role === 'ADMIN' && currentView === 'admin') {
         fetchDevDashboardData();
@@ -2076,19 +2138,28 @@ export default function App() {
                                     </div>
                                     <span className="action-count">{activeVideo.commentCount ?? activeVideo.comments_count ?? 0}</span>
                                   </button>
+                                  <button
+                                      className={`action-item-button ${activeVideo.favorited ? 'favorited' : ''} ${favoritingVideoId === activeVideo.id ? 'is-loading' : ''}`}
+                                      onClick={(e) => handleToggleFavorite(activeVideo.id, e)}
+                                      disabled={favoritingVideoId === activeVideo.id}
+                                      title={activeVideo.favorited ? '取消收藏' : '收藏'}
+                                  >
+                                    <div className="action-icon-circle">
+                                      <svg viewBox="0 0 24 24">
+                                        {activeVideo.favorited ? (
+                                          <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                                        ) : (
+                                          <path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z" />
+                                        )}
+                                      </svg>
+                                    </div>
+                                    <span className="action-count">{activeVideo.favoriteCount ?? 0}</span>
+                                  </button>
                                   <button className="action-item-button special-action" onClick={(e) => { e.stopPropagation(); openSharePanel(activeVideo.id); }}>
                                     <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
                                     <span className="action-count">转发</span>
                                   </button>
                                   {renderDownloadButton(activeVideo)}
-                                  <button className="action-item-button special-action" onClick={openMyVideosPanel}>
-                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z"/></svg></div>
-                                    <span className="action-count">我的作品</span>
-                                  </button>
-                                  <button className="action-item-button special-action" onClick={openLikedVideosPanel}>
-                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
-                                    <span className="action-count">我的喜欢</span>
-                                  </button>
                                   <button className="action-item-button special-action" onClick={openSharedVideosPanel}>
                                     <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
                                     <span className="action-count">分享给我</span>
@@ -2192,19 +2263,28 @@ export default function App() {
                                   </div>
                                   <span className="action-count">{activeVideo.commentCount ?? activeVideo.comments_count ?? 0}</span>
                                 </button>
+                                <button
+                                    className={`action-item-button ${activeVideo.favorited ? 'favorited' : ''} ${favoritingVideoId === activeVideo.id ? 'is-loading' : ''}`}
+                                    onClick={(e) => handleToggleFavorite(activeVideo.id, e)}
+                                    disabled={favoritingVideoId === activeVideo.id}
+                                    title={activeVideo.favorited ? '取消收藏' : '收藏'}
+                                >
+                                  <div className="action-icon-circle">
+                                    <svg viewBox="0 0 24 24">
+                                      {activeVideo.favorited ? (
+                                        <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                                      ) : (
+                                        <path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z" />
+                                      )}
+                                    </svg>
+                                  </div>
+                                  <span className="action-count">{activeVideo.favoriteCount ?? 0}</span>
+                                </button>
                                 <button className="action-item-button special-action" onClick={(e) => { e.stopPropagation(); openSharePanel(activeVideo.id); }}>
                                   <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
                                   <span className="action-count">转发</span>
                                 </button>
                                 {renderDownloadButton(activeVideo)}
-                                <button className="action-item-button special-action" onClick={openMyVideosPanel}>
-                                  <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z"/></svg></div>
-                                  <span className="action-count">我的作品</span>
-                                </button>
-                                <button className="action-item-button special-action" onClick={openLikedVideosPanel}>
-                                  <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
-                                  <span className="action-count">我的喜欢</span>
-                                </button>
                                 <button className="action-item-button special-action" onClick={openSharedVideosPanel}>
                                   <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
                                   <span className="action-count">分享给我</span>
@@ -2337,19 +2417,28 @@ export default function App() {
                                     </div>
                                     <span className="action-count">{activeVideo.commentCount ?? activeVideo.comments_count ?? 0}</span>
                                   </button>
+                                  <button
+                                      className={`action-item-button ${activeVideo.favorited ? 'favorited' : ''} ${favoritingVideoId === activeVideo.id ? 'is-loading' : ''}`}
+                                      onClick={(e) => handleToggleFavorite(activeVideo.id, e)}
+                                      disabled={favoritingVideoId === activeVideo.id}
+                                      title={activeVideo.favorited ? '取消收藏' : '收藏'}
+                                  >
+                                    <div className="action-icon-circle">
+                                      <svg viewBox="0 0 24 24">
+                                        {activeVideo.favorited ? (
+                                          <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                                        ) : (
+                                          <path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z" />
+                                        )}
+                                      </svg>
+                                    </div>
+                                    <span className="action-count">{activeVideo.favoriteCount ?? 0}</span>
+                                  </button>
                                   <button className="action-item-button special-action" onClick={(e) => { e.stopPropagation(); openSharePanel(activeVideo.id); }}>
                                     <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
                                     <span className="action-count">转发</span>
                                   </button>
                                   {renderDownloadButton(activeVideo)}
-                                  <button className="action-item-button special-action" onClick={openMyVideosPanel}>
-                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z"/></svg></div>
-                                    <span className="action-count">我的作品</span>
-                                  </button>
-                                  <button className="action-item-button special-action" onClick={openLikedVideosPanel}>
-                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
-                                    <span className="action-count">我的喜欢</span>
-                                  </button>
                                   <button className="action-item-button special-action" onClick={openSharedVideosPanel}>
                                     <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
                                     <span className="action-count">分享给我</span>
@@ -2420,22 +2509,76 @@ export default function App() {
                           >
                             点赞的视频
                           </button>
+                          {profileUserId === user?.id && (
+                            <button
+                                className={`profile-tab ${profileTab === 'favorited' ? 'active' : ''}`}
+                                onClick={() => switchProfileTab('favorited')}
+                            >
+                              收藏的视频
+                            </button>
+                          )}
                         </div>
 
                         <div className="profile-videos-section">
+                          {profileUserId === user?.id && profileTab === 'published' && profileVideos.length > 0 && (
+                            <div className="my-videos-toolbar" style={{ marginBottom: 16 }}>
+                              <button
+                                className={`my-videos-batch-toggle-btn ${batchManageMode ? 'active' : ''}`}
+                                onClick={toggleBatchMode}
+                              >
+                                {batchManageMode ? '退出管理' : '批量管理'}
+                              </button>
+                              {batchManageMode && (
+                                <>
+                                  <button className="my-videos-batch-toggle-btn" onClick={selectAllVideos}>
+                                    {selectedVideoIds.size === profileVideos.length && profileVideos.length > 0
+                                      ? '取消全选'
+                                      : '全选'}
+                                  </button>
+                                  <button
+                                    className="my-videos-batch-delete-btn"
+                                    disabled={selectedVideoIds.size === 0}
+                                    onClick={executeBatchDelete}
+                                  >
+                                    批量删除 ({selectedVideoIds.size})
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          )}
+
                           {profileVideos.length > 0 ? (
                               <div className="my-videos-grid web-modal-grid profile-video-grid">
                                 {profileVideos.map((pv) => (
                                     <div
                                         key={`profile-${profileTab}-${pv.id}`}
-                                        className="grid-video-card"
-                                        onClick={() => handlePlayProfileVideo(pv)}
+                                        className={`grid-video-card ${batchManageMode ? 'batch-selectable' : ''}`}
+                                        onClick={batchManageMode ? (e) => toggleVideoSelection(pv.id, e) : () => handlePlayProfileVideo(pv)}
                                     >
                                       <img
                                           className="grid-video-cover"
                                           src={getMediaUrl(pv.cover_url)}
                                           alt={pv.title}
                                       />
+                                      {batchManageMode ? (
+                                        <div className={`grid-card-checkbox ${selectedVideoIds.has(pv.id) ? 'checked' : ''}`}>
+                                          <svg viewBox="0 0 24 24">
+                                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                                          </svg>
+                                        </div>
+                                      ) : (
+                                        profileUserId === user?.id && profileTab === 'published' && (
+                                          <button
+                                              className="grid-card-delete-btn"
+                                              onClick={(e) => handleDeleteVideo(pv.id, e)}
+                                              title="删除此视频"
+                                          >
+                                            <svg viewBox="0 0 24 24">
+                                              <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                                            </svg>
+                                          </button>
+                                        )
+                                      )}
                                       <div className="grid-video-info">
                                         <svg viewBox="0 0 24 24">
                                           <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
@@ -2447,7 +2590,7 @@ export default function App() {
                               </div>
                           ) : (
                               <div className="profile-videos-empty">
-                                <p>{profileTab === 'published' ? '该用户还没有发布视频' : '该用户还没有点赞任何视频'}</p>
+                                <p>{profileTab === 'published' ? '该用户还没有发布视频' : (profileTab === 'liked' ? '该用户还没有点赞任何视频' : '您还没有收藏任何视频')}</p>
                               </div>
                           )}
 
@@ -2611,61 +2754,28 @@ export default function App() {
 
                 <h3>我的作品 ({myVideos.length})</h3>
 
-                <div className="my-videos-toolbar">
-                  <button
-                    className={`my-videos-batch-toggle-btn ${batchManageMode ? 'active' : ''}`}
-                    onClick={toggleBatchMode}
-                  >
-                    {batchManageMode ? '退出管理' : '批量管理'}
-                  </button>
-                  {batchManageMode && (
-                    <>
-                      <button className="my-videos-batch-toggle-btn" onClick={selectAllVideos}>
-                        {selectedVideoIds.size === myVideos.length && myVideos.length > 0
-                          ? '取消全选'
-                          : '全选'}
-                      </button>
-                      <button
-                        className="my-videos-batch-delete-btn"
-                        disabled={selectedVideoIds.size === 0}
-                        onClick={executeBatchDelete}
-                      >
-                        批量删除 ({selectedVideoIds.size})
-                      </button>
-                    </>
-                  )}
-                </div>
-
                 <div className="my-videos-grid web-modal-grid">
                   {myVideos.length > 0 ? (
                       myVideos.map((mv, idx) => (
                           <div
                             key={mv.id}
-                            className={`grid-video-card ${batchManageMode ? 'batch-selectable' : ''}`}
-                            onClick={batchManageMode ? (e) => toggleVideoSelection(mv.id, e) : () => handlePlayMyVideo(idx)}
+                            className="grid-video-card"
+                            onClick={() => handlePlayMyVideo(idx)}
                           >
                             <img
                                 className="grid-video-cover"
                                 src={getMediaUrl(mv.cover_url)}
                                 alt={mv.title}
                             />
-                            {batchManageMode ? (
-                              <div className={`grid-card-checkbox ${selectedVideoIds.has(mv.id) ? 'checked' : ''}`}>
-                                <svg viewBox="0 0 24 24">
-                                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
-                                </svg>
-                              </div>
-                            ) : (
-                              <button
-                                  className="grid-card-delete-btn"
-                                  onClick={(e) => handleDeleteVideo(mv.id, e)}
-                                  title="删除此视频"
-                              >
-                                <svg viewBox="0 0 24 24">
-                                  <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                                </svg>
-                              </button>
-                            )}
+                            <button
+                                className="grid-card-delete-btn"
+                                onClick={(e) => handleDeleteVideo(mv.id, e)}
+                                title="删除此视频"
+                            >
+                              <svg viewBox="0 0 24 24">
+                                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                              </svg>
+                            </button>
                             <div className="grid-video-info">
                               <svg viewBox="0 0 24 24">
                                 <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
