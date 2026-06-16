@@ -2263,7 +2263,7 @@ export default function App() {
                                       onClick={() => { clearSearch(); openUserProfile(u.id); }}
                                       style={{ cursor: 'pointer' }}
                                   >
-                                    <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${u.username}`} alt="" className="search-avatar" />
+                                    <img src={getAvatarUrl(u)} alt="" className="search-avatar" />
                                     <div className="search-item-info">
                                       <div className="search-item-name">@{u.username}</div>
                                       {u.displayName && <div className="search-item-sub">{u.displayName}</div>}
@@ -2362,7 +2362,7 @@ export default function App() {
                                     onClick={() => { exitSearchPage(); openUserProfile(u.id); }}
                                     style={{ cursor: 'pointer' }}
                                 >
-                                  <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${u.username}`} alt="" className="search-user-avatar" />
+                                  <img src={getAvatarUrl(u)} alt="" className="search-user-avatar" />
                                   <div className="search-user-info">
                                     <div className="search-user-name">@{u.username}</div>
                                     {u.displayName && <div className="search-user-sub">{u.displayName}</div>}
@@ -2613,7 +2613,7 @@ export default function App() {
                                      transition: 'all 0.15s'
                                    }}
                               >
-                                <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${u.username}`} alt="" style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, border: selectedFollowingUser?.id === u.id ? '2px solid var(--primary-cyan)' : 'none' }} />
+                                <img src={getAvatarUrl(u)} alt="" style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, border: selectedFollowingUser?.id === u.id ? '2px solid var(--primary-cyan)' : 'none' }} />
                                 <div style={{ minWidth: 0, flex: 1 }}>
                                   <div style={{ fontSize: 14, fontWeight: 600, color: selectedFollowingUser?.id === u.id ? 'var(--primary-cyan)' : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{u.username}</div>
                                   {u.displayName && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.displayName}</div>}
@@ -2890,7 +2890,7 @@ export default function App() {
                                      transition: 'all 0.15s'
                                    }}
                               >
-                                <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${f.username}`} alt="" style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, border: activeFriend?.id === f.id ? '2px solid var(--primary-cyan)' : 'none' }} />
+                                <img src={getAvatarUrl(f)} alt="" style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, border: activeFriend?.id === f.id ? '2px solid var(--primary-cyan)' : 'none' }} />
                                 <div style={{ minWidth: 0, flex: 1 }}>
                                   <div style={{ fontSize: 14, fontWeight: 600, color: activeFriend?.id === f.id ? 'var(--primary-cyan)' : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{f.username}</div>
                                   {f.displayName && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>{f.displayName}</div>}
@@ -2908,7 +2908,7 @@ export default function App() {
                               <>
                                 {/* 聊天头部 */}
                                 <div style={{ height: 60, borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', padding: '0 24px', background: 'rgba(0,0,0,0.2)' }}>
-                                  <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${activeFriend.username}`} alt="" style={{ width: 32, height: 32, borderRadius: '50%', marginRight: 12 }} />
+                                  <img src={getAvatarUrl(activeFriend)} alt="" style={{ width: 32, height: 32, borderRadius: '50%', marginRight: 12 }} />
                                   <span style={{ fontSize: 16, fontWeight: 600, color: '#fff' }}>@{activeFriend.username}</span>
                                   {activeFriend.displayName && (
                                       <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', marginLeft: 8 }}>({activeFriend.displayName})</span>
@@ -2930,7 +2930,7 @@ export default function App() {
                                             <div key={`${msg.type || 'video'}-${msg.id}`} style={{ display: 'flex', justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
                                               <div style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', gap: 12, maxWidth: '75%' }}>
                                                 <img
-                                                    src={`https://api.dicebear.com/7.x/bottts/svg?seed=${isMe ? user?.username : activeFriend.username}`}
+                                                    src={getAvatarUrl(isMe ? user : activeFriend)}
                                                     alt=""
                                                     style={{ width: 36, height: 36, borderRadius: '50%', flexShrink: 0, marginTop: 4 }}
                                                 />
@@ -3365,7 +3365,7 @@ export default function App() {
                                 onClick={() => { setIsCommentsOpen(false); openUserProfile(item.userId); }}
                                 title="查看用户主页"
                             >
-                              <img src={getAvatarUrl(item.username)} alt={item.username} />
+                              <img src={getAvatarUrl(item)} alt={item.username} />
                             </div>
                             <div className="comment-body">
                               <div className="comment-author-row">
@@ -3450,7 +3450,7 @@ export default function App() {
                           >
                             <div className="like-notification-avatar" style={{ position: 'relative' }}>
                               <img
-                                  src={`https://api.dicebear.com/7.x/bottts/svg?seed=${item.likerUsername}`}
+                                  src={getAvatarUrl({ username: item.likerUsername, displayName: item.likerDisplayName, avatarUrl: item.likerAvatarUrl })}
                                   alt={item.likerUsername}
                                   style={{ width: 36, height: 36, borderRadius: '50%' }}
                               />
@@ -3770,7 +3770,7 @@ export default function App() {
                               }}
                           >
                             <img
-                                src={`https://api.dicebear.com/7.x/bottts/svg?seed=${u.username}`}
+                                src={getAvatarUrl(u)}
                                 alt={u.username}
                                 style={{ width: 40, height: 40, borderRadius: '50%' }}
                             />
