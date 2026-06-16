@@ -478,6 +478,7 @@ export default function App() {
   const getAvatarUrl = (userOrSeed) => {
     if (userOrSeed && typeof userOrSeed === 'object') {
       if (userOrSeed.avatarUrl) return getMediaUrl(userOrSeed.avatarUrl);
+      if (userOrSeed.creatorAvatarUrl) return getMediaUrl(userOrSeed.creatorAvatarUrl);
       const seed = userOrSeed.username || userOrSeed.displayName || 'user';
       return `https://api.dicebear.com/7.x/bottts/svg?seed=${seed}`;
     }
@@ -2672,7 +2673,7 @@ export default function App() {
                                       title="进入作者主页"
                                   >
                                     <div className="sidebar-avatar">
-                                      <img src={getAvatarUrl(activeVideo.creator_name)} alt="avatar" />
+                                      <img src={getAvatarUrl(activeVideo)} alt="avatar" />
                                     </div>
                                     {activeVideo.user_id !== user?.id && (
                                         <button className={`follow-badge-btn ${isFollowingCreator ? (isFriendWithCreator ? 'is-friend' : 'is-following') : ''}`} onClick={(e) => handleFollowToggle(activeVideo.user_id, e)} title={isFollowingCreator ? (isFriendWithCreator ? '好友' : '取关') : '关注'}>
@@ -2799,7 +2800,7 @@ export default function App() {
                                     title="进入作者主页"
                                 >
                                   <div className="sidebar-avatar">
-                                    <img src={getAvatarUrl(activeVideo.creator_name)} alt="avatar" />
+                                    <img src={getAvatarUrl(activeVideo)} alt="avatar" />
                                   </div>
                                   {activeVideo.user_id !== user?.id && (
                                       <button className={`follow-badge-btn ${isFollowingCreator ? (isFriendWithCreator ? 'is-friend' : 'is-following') : ''}`} onClick={(e) => handleFollowToggle(activeVideo.user_id, e)} title={isFollowingCreator ? (isFriendWithCreator ? '好友' : '取关') : '关注'}>
