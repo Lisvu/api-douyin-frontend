@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -19,12 +20,12 @@ jobs:
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
             set -e
+            fuser -k 5173/tcp || true
+
             cd /root/api-course/api-douyin-frontend
             git fetch origin main
             git reset --hard origin/main
-            npm ci
+            npm install
             npm run build
 
-            pkill -f "node .*vite --host 0.0.0.0" || true
-            pkill -f "vite --host 0.0.0.0" || true
             nohup npm run dev -- --host 0.0.0.0 > /root/api-course/api-douyin-frontend/frontend.log 2>&1 < /dev/null &
