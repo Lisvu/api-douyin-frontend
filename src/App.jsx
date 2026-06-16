@@ -120,6 +120,11 @@ export default function App() {
   const searchTimerRef = useRef(null);
   const [friends, setFriends] = useState([]);
   const [isLoadingFriends, setIsLoadingFriends] = useState(false);
+  const [chatHistory, setChatHistory] = useState([]);
+  const [isLoadingChat, setIsLoadingChat] = useState(false);
+  const [activeFriend, setActiveFriend] = useState(null);
+  const [chatDraft, setChatDraft] = useState('');
+  const [isSendingChat, setIsSendingChat] = useState(false);
   const [followingUsers, setFollowingUsers] = useState([]);
   const [isLoadingFollowing, setIsLoadingFollowing] = useState(false);
   const [selectedFollowingUser, setSelectedFollowingUser] = useState(null);
@@ -158,6 +163,7 @@ export default function App() {
   const [commentDraft, setCommentDraft] = useState('');
   const [isPostingComment, setIsPostingComment] = useState(false);
   const [isLoadingComments, setIsLoadingComments] = useState(false);
+  const commentsListRef = useRef(null);
 
   // User profile page
   const [profileUserId, setProfileUserId] = useState(null);
@@ -166,6 +172,10 @@ export default function App() {
   const [profileVideos, setProfileVideos] = useState([]);
   const [profileVideosPagination, setProfileVideosPagination] = useState({ nextCursor: null, hasMore: false });
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
+  const [profileRelationModal, setProfileRelationModal] = useState(null);
+  const [profileRelationUsers, setProfileRelationUsers] = useState([]);
+  const [isLoadingProfileRelations, setIsLoadingProfileRelations] = useState(false);
+  const [isUpdatingProfileMedia, setIsUpdatingProfileMedia] = useState(false);
 
   // Video upload form state
   const [uploadTitle, setUploadTitle] = useState('');
@@ -173,6 +183,7 @@ export default function App() {
   const [uploadVideo, setUploadVideo] = useState(null);
   const [uploadCover, setUploadCover] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isGeneratingCopy, setIsGeneratingCopy] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatusMsg, setUploadStatusMsg] = useState('');
 
@@ -200,6 +211,7 @@ export default function App() {
 
   // UI Toast message
   const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
 
   const videoRef = useRef(null);
   const scrollLockRef = useRef(false);
@@ -396,8 +408,14 @@ export default function App() {
   }, [searchPage]);
 
   const showToast = (message, isError = false) => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
     setToast({ message, isError });
-    setTimeout(() => setToast(null), 4000);
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 4000);
   };
 
   const normalizeFeedVideo = (video) => {
@@ -464,6 +482,11 @@ export default function App() {
       return `https://api.dicebear.com/7.x/bottts/svg?seed=${seed}`;
     }
     return `https://api.dicebear.com/7.x/bottts/svg?seed=${userOrSeed || 'user'}`;
+  };
+
+  const getProfileBackgroundUrl = (profile) => {
+    if (!profile?.profileBackgroundUrl) return '';
+    return getMediaUrl(profile.profileBackgroundUrl);
   };
 
   const getMediaUrl = (url) => {
@@ -1158,12 +1181,15 @@ export default function App() {
     });
     setIsSharing(false);
     if (data && data.success) {
-      showToast('视频转发成功！');
+      showToast('视频分享成功！');
       setIsShareOpen(false);
       setUserSearchQuery('');
       setUserSearchResults([]);
+      if (activeFriend?.id === toUserId) {
+        await openFriendChat(activeFriend);
+      }
     } else if (data) {
-      showToast(data.message || '转发失败', true);
+      showToast(data.message || '分享失败', true);
     }
   };
 
@@ -1225,10 +1251,21 @@ export default function App() {
   const fetchComments = async (videoId, cursor = null, append = false) => {
     setIsLoadingComments(true);
     const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
-    const data = await apiFetch(`${API_PREFIX}/videos/${videoId}/comments?limit=20${cursorParam}`);
+    const data = await apiFetch(`${API_PREFIX}/videos/${videoId}/comments?limit=20&_t=${Date.now()}${cursorParam}`);
     setIsLoadingComments(false);
     if (data && data.success) {
-      setComments(prev => append ? [...prev, ...(data.comments || [])] : data.comments || []);
+      setComments(prev => {
+        const fetched = data.comments || [];
+        if (append) {
+          const uniqueFetched = fetched.filter(fItem => !prev.some(pItem => pItem.id === fItem.id));
+          return [...prev, ...uniqueFetched];
+        } else {
+          const pendingLocal = prev.filter(pItem =>
+              pItem.pending && pItem.videoId === videoId && !fetched.some(fItem => fItem.id === pItem.id)
+          );
+          return [...pendingLocal, ...fetched];
+        }
+      });
       setCommentsTotalCount(data.totalCount ?? 0);
       setCommentsPagination({
         nextCursor: data.pagination?.nextCursor ?? null,
@@ -1240,28 +1277,45 @@ export default function App() {
   const handlePostComment = async (e) => {
     e?.preventDefault();
     const content = commentDraft.trim();
-    if (!content || !commentsVideoId || isPostingComment) return;
+    const targetVideoId = commentsVideoId || activeVideo?.id;
+    if (!content || !targetVideoId || isPostingComment) {
+      if (content && !targetVideoId) {
+        showToast('评论失败：没有找到当前视频', true);
+      }
+      return;
+    }
+
+    showToast('正在发送评论...');
 
     setIsPostingComment(true);
-    const data = await apiFetch(`${API_PREFIX}/videos/${commentsVideoId}/comments`, {
+    const data = await apiFetch(`${API_PREFIX}/videos/${targetVideoId}/comments`, {
       method: 'POST',
       body: JSON.stringify({ content })
     });
     setIsPostingComment(false);
 
     if (data && data.success) {
-      setCommentDraft('');
       const newCount = data.commentsCount ?? commentsTotalCount + 1;
+      setCommentDraft('');
       setCommentsTotalCount(newCount);
-      updateVideoCommentCount(commentsVideoId, newCount);
+      updateVideoCommentCount(targetVideoId, newCount);
+      setCommentsPagination({ nextCursor: null, hasMore: false });
       if (data.comment) {
-        setComments(prev => [data.comment, ...prev]);
+        setComments(prev => [
+          { ...data.comment, justPosted: true },
+          ...prev.filter(item => item.id !== data.comment.id)
+        ]);
+        requestAnimationFrame(() => {
+          commentsListRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+        });
       } else {
-        await fetchComments(commentsVideoId);
+        await fetchComments(targetVideoId);
       }
       showToast('评论发表成功');
     } else if (data) {
       showToast(data.message || '评论失败', true);
+    } else {
+      showToast('评论失败：请求没有发送成功', true);
     }
   };
 
@@ -1318,9 +1372,82 @@ export default function App() {
   const fetchUserProfile = async (userId) => {
     const data = await apiFetch(`${API_PREFIX}/users/${userId}`);
     if (data && data.success) {
-      setProfileUser(data.user);
+      let nextProfileUser = data.user;
+      if (userId === user?.id) {
+        const relationData = await apiFetch(`${API_PREFIX}/users/${userId}/relation`, { silent: true });
+        if (relationData && relationData.success) {
+          nextProfileUser = {
+            ...nextProfileUser,
+            followingCount: relationData.followingCount ?? nextProfileUser.followingCount,
+            followerCount: relationData.followerCount ?? nextProfileUser.followerCount,
+          };
+        }
+      }
+      setProfileUser(nextProfileUser);
     } else {
       showToast(data?.message || '无法加载用户资料', true);
+    }
+  };
+
+  const openProfileRelationModal = async (type) => {
+    if (profileUserId !== user?.id) {
+      showToast('当前只能查看自己的关注和粉丝', true);
+      return;
+    }
+    setProfileRelationModal(type);
+    setProfileRelationUsers([]);
+    setIsLoadingProfileRelations(true);
+    const endpoint = type === 'following' ? 'following' : 'followers';
+    const data = await apiFetch(`${API_PREFIX}/users/me/${endpoint}`);
+    setIsLoadingProfileRelations(false);
+    if (data && data.success) {
+      setProfileRelationUsers(data.users || []);
+      setProfileUser(prev => prev ? {
+        ...prev,
+        [type === 'following' ? 'followingCount' : 'followerCount']: data.count ?? (data.users || []).length,
+      } : prev);
+    } else if (data) {
+      showToast(data.message || '无法加载列表', true);
+    }
+  };
+
+  const closeProfileRelationModal = () => {
+    setProfileRelationModal(null);
+    setProfileRelationUsers([]);
+  };
+
+  const openProfileFromRelationModal = (targetUserId) => {
+    closeProfileRelationModal();
+    openUserProfile(targetUserId);
+  };
+
+  const handleProfileMediaChange = async (kind, file) => {
+    if (!file || profileUserId !== user?.id) return;
+    if (!file.type.startsWith('image/')) {
+      showToast('请选择图片文件', true);
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('图片不能超过 5MB', true);
+      return;
+    }
+
+    setIsUpdatingProfileMedia(true);
+    const formData = new FormData();
+    formData.append(kind, file);
+    const data = await apiFetch(`${API_PREFIX}/users/me/profile-media`, {
+      method: 'PUT',
+      body: formData,
+      timeoutMs: 30000,
+    });
+    setIsUpdatingProfileMedia(false);
+
+    if (data && data.success) {
+      setProfileUser(data.user);
+      setUser(prev => prev ? { ...prev, ...data.user } : prev);
+      showToast(kind === 'avatar' ? '头像已更新' : '主页背景已更新');
+    } else if (data) {
+      showToast(data.message || '更新失败', true);
     }
   };
 
@@ -1433,30 +1560,62 @@ export default function App() {
     startSingleVideoPlayback(video);
   };
 
+  const openFriendChat = async (friend) => {
+    setActiveFriend(friend);
+    setIsLoadingChat(true);
+    setChatHistory([]);
+    setChatDraft('');
+    try {
+      const data = await apiFetch(`${API_PREFIX}/users/me/chat-history/${friend.id}`);
+      if (data && data.success) {
+        setChatHistory(data.history || []);
+      } else {
+        setChatHistory([]);
+      }
+    } catch (err) {
+      console.error("Failed to load chat history:", err);
+      setChatHistory([]);
+    } finally {
+      setIsLoadingChat(false);
+    }
+  };
+
+  const sendChatMessage = async (e) => {
+    e?.preventDefault();
+    const content = chatDraft.trim();
+    if (!content || !activeFriend || isSendingChat) return;
+
+    setIsSendingChat(true);
+    const data = await apiFetch(`${API_PREFIX}/users/me/chat-history/${activeFriend.id}`, {
+      method: 'POST',
+      body: JSON.stringify({ content })
+    });
+    setIsSendingChat(false);
+
+    if (data && data.success) {
+      setChatDraft('');
+      if (data.chatMessage) {
+        setChatHistory(prev => [...prev, data.chatMessage]);
+      } else {
+        await openFriendChat(activeFriend);
+      }
+    } else if (data) {
+      showToast(data.message || '消息发送失败', true);
+    }
+  };
+
   const fetchFriends = async () => {
     setIsLoadingFriends(true);
     const data = await apiFetch(`${API_PREFIX}/users/me/friends`);
     setIsLoadingFriends(false);
     if (data && data.success) {
-      const friends = data.friends || [];
-      setFriends(friends);
-      if (friends.length > 0) {
-        setIsLoadingFeed(true);
-        const videoLists = await Promise.all(
-            friends.map(f => apiFetch(`${API_PREFIX}/users/${f.id}/videos?limit=20`))
-        );
-        setIsLoadingFeed(false);
-        const allVideos = videoLists
-            .filter(d => d && d.success)
-            .flatMap(d => d.videos || [])
-            .map(normalizeFeedVideo)
-            .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-        setVideos(allVideos);
-        setCurrentIndex(0);
-        setAllViewed(false);
-        setFeedPagination({ nextCursor: null, hasMore: false });
+      const friendsList = data.friends || [];
+      setFriends(friendsList);
+      if (friendsList.length > 0) {
+        openFriendChat(friendsList[0]);
       } else {
-        setVideos([]);
+        setActiveFriend(null);
+        setChatHistory([]);
       }
     }
   };
@@ -1641,6 +1800,48 @@ export default function App() {
         showToast(data.message, true);
       }
     }, 300);
+  };
+
+  const handleGenerateAiCopy = async () => {
+    if (!uploadVideo) {
+      showToast('请先选择视频文件', true);
+      return;
+    }
+
+    setIsGeneratingCopy(true);
+    try {
+      let frameFile = null;
+      try {
+        const frameBlob = await extractVideoFirstFrame(uploadVideo);
+        frameFile = new File([frameBlob], 'video-frame.jpg', { type: 'image/jpeg' });
+      } catch (err) {
+        console.warn('AI copy frame extraction failed, using filename only:', err);
+      }
+
+      const formData = new FormData();
+      formData.append('filename', uploadVideo.name);
+      if (frameFile) {
+        formData.append('frame', frameFile);
+      }
+
+      const data = await apiFetch(`${API_PREFIX}/ai/video-copy`, {
+        method: 'POST',
+        body: formData,
+        timeoutMs: 180000,
+      });
+
+      if (data && data.success) {
+        const copy = data.copy || {};
+        const hashtags = Array.isArray(copy.hashtags) ? copy.hashtags.join(' ') : '';
+        setUploadTitle(copy.title || uploadTitle);
+        setUploadDesc([copy.description, hashtags].filter(Boolean).join('\n'));
+        showToast('AI 文案已生成');
+      } else if (data) {
+        showToast(data.message || 'AI 文案生成失败', true);
+      }
+    } finally {
+      setIsGeneratingCopy(false);
+    }
   };
 
   const handleDeleteVideo = (videoId, e) => {
@@ -1929,6 +2130,7 @@ export default function App() {
     setIsShareOpen(true);
     setUserSearchQuery('');
     setUserSearchResults([]);
+    fetchFriends();
   };
 
   const openSharedVideosPanel = () => {
@@ -2106,7 +2308,7 @@ export default function App() {
                     <svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
                     <span>重置已看</span>
                   </button>
-                  <button className="header-quick-btn like-notification-trigger" onClick={openLikeNotificationsPanel} title="点赞通知">
+                  <button className="header-quick-btn like-notification-trigger" onClick={openLikeNotificationsPanel} title="消息通知">
                     <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                       <svg viewBox="0 0 24 24"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z"/></svg>
                       {likeNotificationUnreadCount > 0 && (
@@ -2115,7 +2317,7 @@ export default function App() {
           </span>
                       )}
                     </div>
-                    <span>点赞通知</span>
+                    <span>消息通知</span>
                   </button>
                 </div>
             )}
@@ -2513,13 +2715,9 @@ export default function App() {
                                   </button>
                                   <button className="action-item-button special-action" onClick={(e) => { e.stopPropagation(); openSharePanel(activeVideo.id); }}>
                                     <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
-                                    <span className="action-count">转发</span>
+                                    <span className="action-count">分享</span>
                                   </button>
                                   {renderDownloadButton(activeVideo)}
-                                  <button className="action-item-button special-action" onClick={openSharedVideosPanel}>
-                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
-                                    <span className="action-count">分享给我</span>
-                                  </button>
                                 </div>
 
                                 <div className="web-nav-arrows">
@@ -2644,13 +2842,9 @@ export default function App() {
                                 </button>
                                 <button className="action-item-button special-action" onClick={(e) => { e.stopPropagation(); openSharePanel(activeVideo.id); }}>
                                   <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
-                                  <span className="action-count">转发</span>
+                                  <span className="action-count">分享</span>
                                 </button>
                                 {renderDownloadButton(activeVideo)}
-                                <button className="action-item-button special-action" onClick={openSharedVideosPanel}>
-                                  <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
-                                  <span className="action-count">分享给我</span>
-                                </button>
                               </div>
 
                               <div className="web-nav-arrows">
@@ -2686,18 +2880,18 @@ export default function App() {
                               <div style={{ textAlign: 'center', padding: 32 }}><div className="loading-spinner" style={{ width: 28, height: 28, margin: '0 auto' }} /></div>
                           ) : friends.length > 0 ? friends.map(f => (
                               <div key={f.id}
-                                   onClick={() => fetchUserVideos(f)}
+                                   onClick={() => openFriendChat(f)}
                                    style={{
                                      display: 'flex', alignItems: 'center', gap: 12,
                                      padding: '12px 16px', cursor: 'pointer',
-                                     background: selectedFollowingUser?.id === f.id ? 'rgba(186,230,253,0.12)' : 'transparent',
-                                     borderLeft: selectedFollowingUser?.id === f.id ? '3px solid var(--primary-cyan)' : '3px solid transparent',
+                                     background: activeFriend?.id === f.id ? 'rgba(186,230,253,0.12)' : 'transparent',
+                                     borderLeft: activeFriend?.id === f.id ? '3px solid var(--primary-cyan)' : '3px solid transparent',
                                      transition: 'all 0.15s'
                                    }}
                               >
-                                <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${f.username}`} alt="" style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, border: selectedFollowingUser?.id === f.id ? '2px solid var(--primary-cyan)' : 'none' }} />
+                                <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${f.username}`} alt="" style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, border: activeFriend?.id === f.id ? '2px solid var(--primary-cyan)' : 'none' }} />
                                 <div style={{ minWidth: 0, flex: 1 }}>
-                                  <div style={{ fontSize: 14, fontWeight: 600, color: selectedFollowingUser?.id === f.id ? 'var(--primary-cyan)' : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{f.username}</div>
+                                  <div style={{ fontSize: 14, fontWeight: 600, color: activeFriend?.id === f.id ? 'var(--primary-cyan)' : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{f.username}</div>
                                   {f.displayName && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>{f.displayName}</div>}
                                   <div style={{ fontSize: 10, color: 'var(--primary-pink)', marginTop: 2 }}>♥ 互关好友</div>
                                 </div>
@@ -2707,125 +2901,179 @@ export default function App() {
                           )}
                         </div>
 
-                        {/* 右侧视频区域 */}
-                        <main className="web-feed-main" style={{ flex: 1 }}>
-                          {isLoadingFeed ? (
-                              <div className="web-feed-center"><div className="loading-spinner" /><p>加载中...</p></div>
-                          ) : videos.length > 0 && activeVideo ? (
-                              <div className={`web-video-stage ${isVideoZoomed ? 'is-zoomed' : ''}`} ref={videoStageRef} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
-                                <div className="web-video-bg" style={{ backgroundImage: `url(${getMediaUrl(activeVideo.cover_url)})`, backgroundSize: 'cover', backgroundPosition: 'center', filter: 'blur(40px) brightness(0.4) saturate(1.5)', transform: 'scale(1.1)' }} />
-                                <div className={`web-video-wrapper ${isVideoZoomed ? 'is-zoomed' : ''}`} onClick={togglePlayState}>
-                                  <video ref={videoRef} className={`web-video-player ${isVideoZoomed ? 'is-zoomed' : ''}`} loop muted={isMuted} preload="metadata" playsInline
-                                         src={getMediaUrl(activeVideo.video_url)} poster={activeVideo.cover_url ? getMediaUrl(activeVideo.cover_url) : undefined}
-                                         onTimeUpdate={handleVideoTimeUpdate} onLoadedMetadata={handleVideoLoadedMetadata} onError={handleVideoPlaybackError} />
-                                  {renderVideoPlayerExtras()}
-                                  <div className="video-play-overlay">{playTriggerAnim && <div className="play-pause-icon-anim">{isPlaying ? <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg> : <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>}</div>}</div>
-                                  <button className="web-mute-button" onClick={toggleMuted}>{isMuted ? <svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.62 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73L16.25 17.52c-.67.52-1.43.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg> : <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>}</button>
-                                  <button className="web-zoom-button" onClick={toggleVideoZoom}>
-                                    {isVideoZoomed ? <svg viewBox="0 0 24 24"><path d="M5 14h2v3h3v2H5v-5zm12 3v-3h2v5h-5v-2h3zM7 7v3H5V5h5v2H7zm12 3h-2V7h-3V5h5v5z"/></svg> : <svg viewBox="0 0 24 24"><path d="M15 3h6v6h-2V6.41l-4.29 4.3-1.42-1.42 4.3-4.29H15V3zM9 21H3v-6h2v2.59l4.29-4.3 1.42 1.42-4.3 4.29H9V21zm12 0h-6v-2h2.59l-4.3-4.29 1.42-1.42 4.29 4.3V15h2v6zM3 9V3h6v2H6.41l4.3 4.29-1.42 1.42-4.29-4.3V9H3z"/></svg>}
-                                  </button>
-                                  <div className="web-video-meta">
-                                    <div
-                                        className="creator-handle clickable-profile"
-                                        onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
-                                        title="进入作者主页"
-                                    >
-                                      @{activeVideo.creator_name || '未知创作者'}
-                                      {activeVideo.user_id === user?.id && <span className="my-publish-badge">我的发布</span>}
-                                    </div>
-                                    <div className="video-caption">{activeVideo.title}{activeVideo.description && ` — ${activeVideo.description}`}</div>
-                                    <div className="video-hashtags">#智能算法推荐 #SpringBoot #React</div>
-                                  </div>
-                                  <div className="web-video-controls" onClick={(e) => e.stopPropagation()}>
-                                    <div className="web-video-progress-track" onClick={handleSeekVideo}><div className="web-video-progress-fill" style={{ width: `${progressPercent}%` }} /></div>
-                                    <div className="web-video-controls-row">
-                                      <span className="web-video-time">{formatVideoTime(playbackProgress.currentTime)} / {formatVideoTime(playbackProgress.duration)}</span>
-                                      <label className="web-video-speed"><span>倍速</span><select value={playbackRate} onChange={handlePlaybackRateChange}>{PLAYBACK_SPEED_OPTIONS.map(r => <option key={r} value={r}>{r}x</option>)}</select></label>
-                                    </div>
-                                  </div>
+                        {/* 右侧聊天窗口区域 */}
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'rgba(28, 28, 36, 0.4)', backdropFilter: 'blur(20px)', position: 'relative' }}>
+                          {activeFriend ? (
+                              <>
+                                {/* 聊天头部 */}
+                                <div style={{ height: 60, borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', padding: '0 24px', background: 'rgba(0,0,0,0.2)' }}>
+                                  <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${activeFriend.username}`} alt="" style={{ width: 32, height: 32, borderRadius: '50%', marginRight: 12 }} />
+                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#fff' }}>@{activeFriend.username}</span>
+                                  {activeFriend.displayName && (
+                                      <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', marginLeft: 8 }}>({activeFriend.displayName})</span>
+                                  )}
                                 </div>
 
-                                <div className="web-action-bar">
-                                  <div
-                                      className="sidebar-avatar-wrapper clickable-profile"
-                                      onClick={(e) => { e.stopPropagation(); openUserProfile(activeVideo.user_id); }}
-                                      title="进入作者主页"
-                                  >
-                                    <div className="sidebar-avatar">
-                                      <img src={getAvatarUrl(activeVideo.creator_name)} alt="avatar" />
-                                    </div>
-                                    {activeVideo.user_id !== user?.id && (
-                                        <button className={`follow-badge-btn ${isFollowingCreator ? (isFriendWithCreator ? 'is-friend' : 'is-following') : ''}`} onClick={(e) => handleFollowToggle(activeVideo.user_id, e)} title={isFollowingCreator ? (isFriendWithCreator ? '好友' : '取关') : '关注'}>
-                                          {isFollowingCreator ? (isFriendWithCreator ? '♥' : '✓') : '+'}
-                                        </button>
-                                    )}
-                                  </div>
-                                  <button className={`action-item-button ${activeVideo.liked ? 'liked' : ''} ${likingVideoId === activeVideo.id ? 'is-loading' : ''}`} onClick={(e) => handleToggleLike(activeVideo.id, e)} disabled={likingVideoId === activeVideo.id}>
-                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
-                                    <span className="action-count">{activeVideo.likeCount ?? 0}</span>
-                                  </button>
+                                {/* 消息记录 */}
+                                <div style={{ flex: 1, overflowY: 'auto', padding: '24px 24px 100px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+                                  {isLoadingChat ? (
+                                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12 }}>
+                                        <div className="loading-spinner" />
+                                        <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>正在加载聊天记录...</span>
+                                      </div>
+                                  ) : chatHistory.length > 0 ? (
+                                      chatHistory.map(msg => {
+                                        const isMe = msg.fromUserId === user?.id;
+                                        const isTextMessage = msg.type === 'text';
+                                        return (
+                                            <div key={`${msg.type || 'video'}-${msg.id}`} style={{ display: 'flex', justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
+                                              <div style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', gap: 12, maxWidth: '75%' }}>
+                                                <img
+                                                    src={`https://api.dicebear.com/7.x/bottts/svg?seed=${isMe ? user?.username : activeFriend.username}`}
+                                                    alt=""
+                                                    style={{ width: 36, height: 36, borderRadius: '50%', flexShrink: 0, marginTop: 4 }}
+                                                />
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start' }}>
+                                                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginBottom: 4 }}>
+                                                    {formatNotificationTime(msg.createdAt)}
+                                                  </span>
+                                                  {isTextMessage ? (
+                                                      <div
+                                                          style={{
+                                                            background: isMe ? 'linear-gradient(135deg, rgba(6, 182, 212, 0.32) 0%, rgba(59, 130, 246, 0.24) 100%)' : 'rgba(255, 255, 255, 0.07)',
+                                                            border: isMe ? '1px solid rgba(6, 182, 212, 0.35)' : '1px solid rgba(255, 255, 255, 0.09)',
+                                                            borderRadius: isMe ? '16px 4px 16px 16px' : '4px 16px 16px 16px',
+                                                            padding: '10px 13px',
+                                                            color: '#fff',
+                                                            fontSize: 14,
+                                                            lineHeight: 1.55,
+                                                            maxWidth: 420,
+                                                            whiteSpace: 'pre-wrap',
+                                                            wordBreak: 'break-word',
+                                                            boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                                                          }}
+                                                      >
+                                                        {msg.content}
+                                                      </div>
+                                                  ) : (
+                                                      <div
+                                                          onClick={() => {
+                                                            const videoItem = {
+                                                              id: msg.videoId,
+                                                              user_id: msg.creatorUserId,
+                                                              title: msg.videoTitle,
+                                                              video_url: msg.videoUrl,
+                                                              cover_url: msg.videoCoverUrl,
+                                                              creator_name: msg.creatorUsername
+                                                            };
+                                                            startSingleVideoPlayback(videoItem);
+                                                          }}
+                                                          style={{
+                                                            background: isMe ? 'linear-gradient(135deg, rgba(6, 182, 212, 0.25) 0%, rgba(59, 130, 246, 0.2) 100%)' : 'rgba(255, 255, 255, 0.05)',
+                                                            border: isMe ? '1px solid rgba(6, 182, 212, 0.3)' : '1px solid rgba(255, 255, 255, 0.08)',
+                                                            borderRadius: isMe ? '16px 4px 16px 16px' : '4px 16px 16px 16px',
+                                                            padding: 12,
+                                                            cursor: 'pointer',
+                                                            transition: 'all 0.2s',
+                                                            boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                                                          }}
+                                                          className="chat-video-card-bubble"
+                                                      >
+                                                        <div style={{ fontSize: 11, color: isMe ? 'var(--primary-cyan)' : 'var(--primary-pink)', fontWeight: 600, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                          <span>🎥</span> {isMe ? '我分享的视频' : '分享给我的视频'}
+                                                        </div>
+                                                        <div style={{ position: 'relative', width: 200, height: 120, borderRadius: 8, overflow: 'hidden', background: '#000', border: '1px solid rgba(255,255,255,0.05)' }}>
+                                                          {msg.videoCoverUrl ? (
+                                                              <img src={getMediaUrl(msg.videoCoverUrl)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                          ) : (
+                                                              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1c1c24', color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>无封面</div>
+                                                          )}
+                                                          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 60%)', display: 'flex', alignItems: 'flex-end', padding: 8 }}>
+                                                            <div style={{ fontSize: 11, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', width: '100%' }}>
+                                                              @{msg.creatorUsername}
+                                                            </div>
+                                                          </div>
+                                                          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 36, height: 36, borderRadius: '50%', background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.9, transition: 'all 0.2s' }} className="play-btn-overlay">
+                                                            <svg style={{ width: 16, height: 16, fill: '#fff', marginLeft: 2 }} viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                                                          </div>
+                                                        </div>
+                                                        <div style={{ fontSize: 13, color: '#fff', marginTop: 8, fontWeight: 500, width: 200, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.4 }}>
+                                                          {msg.videoTitle || '未命名视频'}
+                                                        </div>
+                                                      </div>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            </div>
+                                        );
+                                      })
+                                  ) : (
+                                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: 40, color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>
+                                        <div style={{ fontSize: 48, marginBottom: 16 }}>💬</div>
+                                        <p style={{ fontSize: 14, lineHeight: 1.6 }}>这里还没有分享记录<br />快在视频推荐中分享视频给他吧！</p>
+                                      </div>
+                                  )}
+                                </div>
+                                <form
+                                    onSubmit={sendChatMessage}
+                                    style={{
+                                      position: 'absolute',
+                                      left: 0,
+                                      right: 0,
+                                      bottom: 0,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 12,
+                                      padding: '14px 20px',
+                                      background: 'rgba(7, 7, 12, 0.86)',
+                                      borderTop: '1px solid rgba(255,255,255,0.08)',
+                                      backdropFilter: 'blur(18px)'
+                                    }}
+                                >
+                                  <input
+                                      type="text"
+                                      value={chatDraft}
+                                      onChange={(e) => setChatDraft(e.target.value)}
+                                      placeholder={`给 @${activeFriend.username} 发消息`}
+                                      maxLength={500}
+                                      disabled={isSendingChat}
+                                      style={{
+                                        flex: 1,
+                                        height: 42,
+                                        borderRadius: 999,
+                                        border: '1px solid rgba(255,255,255,0.12)',
+                                        background: 'rgba(255,255,255,0.06)',
+                                        color: '#fff',
+                                        outline: 'none',
+                                        padding: '0 16px',
+                                        fontSize: 14
+                                      }}
+                                  />
                                   <button
-                                      className="action-item-button special-action"
-                                      onClick={(e) => { e.stopPropagation(); openCommentsPanel(activeVideo.id); }}
-                                      title="查看评论"
+                                      type="submit"
+                                      disabled={isSendingChat || !chatDraft.trim()}
+                                      style={{
+                                        height: 42,
+                                        minWidth: 86,
+                                        borderRadius: 999,
+                                        border: 'none',
+                                        background: isSendingChat || !chatDraft.trim() ? 'rgba(255,255,255,0.12)' : 'linear-gradient(135deg, var(--primary-cyan), #3b82f6)',
+                                        color: '#fff',
+                                        fontWeight: 700,
+                                        cursor: isSendingChat || !chatDraft.trim() ? 'not-allowed' : 'pointer'
+                                      }}
                                   >
-                                    <div className="action-icon-circle">
-                                      <svg viewBox="0 0 24 24">
-                                        <path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z" />
-                                      </svg>
-                                    </div>
-                                    <span className="action-count">{activeVideo.commentCount ?? activeVideo.comments_count ?? 0}</span>
+                                    {isSendingChat ? '发送中' : '发送'}
                                   </button>
-                                  <button
-                                      className={`action-item-button ${activeVideo.favorited ? 'favorited' : ''} ${favoritingVideoId === activeVideo.id ? 'is-loading' : ''}`}
-                                      onClick={(e) => handleToggleFavorite(activeVideo.id, e)}
-                                      disabled={favoritingVideoId === activeVideo.id}
-                                      title={activeVideo.favorited ? '取消收藏' : '收藏'}
-                                  >
-                                    <div className="action-icon-circle">
-                                      <svg viewBox="0 0 24 24">
-                                        {activeVideo.favorited ? (
-                                            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
-                                        ) : (
-                                            <path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z" />
-                                        )}
-                                      </svg>
-                                    </div>
-                                    <span className="action-count">{activeVideo.favoriteCount ?? 0}</span>
-                                  </button>
-                                  <button className="action-item-button special-action" onClick={(e) => { e.stopPropagation(); openSharePanel(activeVideo.id); }}>
-                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
-                                    <span className="action-count">转发</span>
-                                  </button>
-                                  {renderDownloadButton(activeVideo)}
-                                  <button className="action-item-button special-action" onClick={openSharedVideosPanel}>
-                                    <div className="action-icon-circle"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
-                                    <span className="action-count">分享给我</span>
-                                  </button>
-                                </div>
-
-                                <div className="web-nav-arrows">
-                                  <button className="arrow-nav-btn" onClick={handlePrevVideo} disabled={currentIndex === 0}>
-                                    <svg style={{ width: 22, height: 22, fill: 'currentColor' }} viewBox="0 0 24 24"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" /></svg>
-                                  </button>
-                                  <button className="arrow-nav-btn" onClick={handleNextVideo} disabled={currentIndex === videos.length - 1 && !feedPagination.hasMore}>
-                                    <svg style={{ width: 22, height: 22, fill: 'currentColor' }} viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" /></svg>
-                                  </button>
-                                </div>
-
-                                <div className="web-feed-progress">
-                                  {currentIndex + 1} / {videos.length}{isLoadingMoreFeed ? ' · 加载中...' : ''}
-                                </div>
-                              </div>
-                          ) : selectedFollowingUser ? (
-                              <div className="web-feed-center"><p>@{selectedFollowingUser.username} 还没有发布任何视频</p></div>
+                                </form>
+                              </>
                           ) : (
-                              <div className="web-feed-center">
-                                <div style={{ fontSize: 48, marginBottom: 16 }}>👈</div>
-                                <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)' }}>从左侧选择一个朋友<br />查看他发布的视频</p>
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.35)', textAlign: 'center' }}>
+                                <div style={{ fontSize: 64, marginBottom: 16 }}>💬</div>
+                                <p style={{ fontSize: 15 }}>选择一个朋友开始聊天</p>
                               </div>
                           )}
-                        </main>
+                        </div>
                       </div>
                   )}
                 </>
@@ -2847,9 +3095,41 @@ export default function App() {
                       </div>
                   ) : profileUser ? (
                       <>
-                        <div className="profile-header">
-                          <div className="profile-avatar-large">
-                            <img src={getAvatarUrl(profileUser)} alt={profileUser.username} />
+                        <div
+                            className={`profile-header ${profileUser.profileBackgroundUrl ? 'has-background' : ''}`}
+                            style={profileUser.profileBackgroundUrl ? { backgroundImage: `url(${getProfileBackgroundUrl(profileUser)})` } : undefined}
+                        >
+                          {profileUserId === user?.id && (
+                              <label className="profile-background-edit-btn" title="更换主页背景">
+                                {isUpdatingProfileMedia ? '上传中...' : '更换背景'}
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    disabled={isUpdatingProfileMedia}
+                                    onChange={(e) => handleProfileMediaChange('background', e.target.files?.[0])}
+                                />
+                              </label>
+                          )}
+                          <div className="profile-avatar-large-wrap">
+                            <label
+                                className={`profile-avatar-large ${profileUserId === user?.id ? 'editable' : ''}`}
+                                title={profileUserId === user?.id ? '点击更换头像' : profileUser.username}
+                            >
+                              <img src={getAvatarUrl(profileUser)} alt={profileUser.username} />
+                              {profileUserId === user?.id && (
+                                  <>
+                                    <span className="profile-avatar-edit-mask">
+                                      {isUpdatingProfileMedia ? '上传中' : '更换头像'}
+                                    </span>
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        disabled={isUpdatingProfileMedia}
+                                        onChange={(e) => handleProfileMediaChange('avatar', e.target.files?.[0])}
+                                    />
+                                  </>
+                              )}
+                            </label>
                           </div>
                           <div className="profile-info">
                             <h2>@{profileUser.username}</h2>
@@ -2864,6 +3144,24 @@ export default function App() {
                               <span className="profile-stat-item">
                                 <strong>{profileUser.publishedVideoCount ?? 0}</strong> 作品
                               </span>
+                              <button
+                                  type="button"
+                                  className="profile-stat-item profile-stat-button"
+                                  onClick={() => openProfileRelationModal('following')}
+                                  disabled={profileUserId !== user?.id}
+                                  title={profileUserId === user?.id ? '查看我关注的人' : '只能查看自己的关注列表'}
+                              >
+                                <strong>{profileUser.followingCount ?? 0}</strong> 关注
+                              </button>
+                              <button
+                                  type="button"
+                                  className="profile-stat-item profile-stat-button"
+                                  onClick={() => openProfileRelationModal('followers')}
+                                  disabled={profileUserId !== user?.id}
+                                  title={profileUserId === user?.id ? '查看我的粉丝' : '只能查看自己的粉丝列表'}
+                              >
+                                <strong>{profileUser.followerCount ?? 0}</strong> 粉丝
+                              </button>
                             </div>
                           </div>
                         </div>
@@ -3053,14 +3351,14 @@ export default function App() {
 
                 <h3>评论 ({commentsTotalCount})</h3>
 
-                <div className="comments-list">
+                <div className="comments-list" ref={commentsListRef}>
                   {isLoadingComments && comments.length === 0 ? (
                       <div className="comments-loading">
                         <div className="loading-spinner" />
                       </div>
                   ) : comments.length > 0 ? (
                       comments.map(item => (
-                          <div key={item.id} className="comment-item">
+                          <div key={item.id} className={`comment-item ${item.justPosted ? 'just-posted' : ''}`}>
                             <div
                                 className="comment-avatar clickable-profile"
                                 onClick={() => { setIsCommentsOpen(false); openUserProfile(item.userId); }}
@@ -3078,7 +3376,9 @@ export default function App() {
                                 </span>
                                 <span className="comment-time">{formatNotificationTime(item.createdAt)}</span>
                               </div>
-                              <div className="comment-text">{item.content}</div>
+                              <div className="comment-text">
+                                {item.content}
+                              </div>
                             </div>
                           </div>
                       ))
@@ -3100,19 +3400,28 @@ export default function App() {
                     </div>
                 )}
 
-                <form className="comment-compose" onSubmit={handlePostComment}>
+                <div className="comment-compose">
                   <input
                       type="text"
                       placeholder="写下你的评论..."
                       value={commentDraft}
                       onChange={e => setCommentDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                          handlePostComment(e);
+                        }
+                      }}
                       maxLength={500}
                       disabled={isPostingComment}
                   />
-                  <button type="submit" disabled={isPostingComment || !commentDraft.trim()}>
+                  <button
+                      type="button"
+                      onClick={handlePostComment}
+                      disabled={isPostingComment || !commentDraft.trim()}
+                  >
                     {isPostingComment ? '发送中...' : '发送'}
                   </button>
-                </form>
+                </div>
               </div>
             </div>
         )}
@@ -3128,7 +3437,7 @@ export default function App() {
                   </svg>
                 </button>
 
-                <h3>谁赞了我的视频</h3>
+                <h3>消息通知</h3>
 
                 <div className="like-notifications-list web-modal-list">
                   {likeNotifications.length > 0 ? (
@@ -3136,29 +3445,57 @@ export default function App() {
                           <div
                               key={item.likeId}
                               className={`like-notification-item ${item.read ? 'is-read' : 'is-unread'}`}
+                              style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
                           >
-                            <div className="like-notification-avatar">
+                            <div className="like-notification-avatar" style={{ position: 'relative' }}>
                               <img
                                   src={`https://api.dicebear.com/7.x/bottts/svg?seed=${item.likerUsername}`}
                                   alt={item.likerUsername}
+                                  style={{ width: 36, height: 36, borderRadius: '50%' }}
                               />
+                              <span style={{
+                                position: 'absolute',
+                                bottom: -2,
+                                right: -2,
+                                width: 16,
+                                height: 16,
+                                borderRadius: '50%',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: 10,
+                                background: item.type === 'like' ? 'var(--primary-pink)' : item.type === 'favorite' ? '#fbbf24' : 'var(--primary-cyan)',
+                                color: '#000',
+                                border: '1px solid #1e1e24'
+                              }}>
+                                {item.type === 'like' ? '❤️' : item.type === 'favorite' ? '⭐' : '💬'}
+                              </span>
                             </div>
-                            <div className="like-notification-content">
-                              <div className="like-notification-title">
-                                <strong>@{item.likerUsername}</strong> 赞了你的视频
+                            <div className="like-notification-content" style={{ flex: 1, minWidth: 0 }}>
+                              <div className="like-notification-title" style={{ fontSize: 13, color: '#fff', lineHeight: 1.4 }}>
+                                <strong>@{item.likerUsername}</strong>{' '}
+                                {item.type === 'like' && '赞了你的视频'}
+                                {item.type === 'favorite' && '收藏了你的视频'}
+                                {item.type === 'comment' && `评论了你的视频：“${item.content}”`}
                               </div>
-                              <div className="like-notification-video">{item.videoTitle}</div>
-                              <div className="like-notification-time">{formatNotificationTime(item.likedAt)}</div>
+                              <div className="like-notification-video" style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                🎬 {item.videoTitle || '未命名视频'}
+                              </div>
+                              <div className="like-notification-time" style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 4 }}>
+                                {formatNotificationTime(item.likedAt)}
+                              </div>
                             </div>
-                            {!item.read && <span className="like-notification-dot" aria-hidden="true" />}
+                            {!item.read && (
+                                <span className="like-notification-dot" style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--primary-pink)', alignSelf: 'center' }} />
+                            )}
                           </div>
                       ))
                   ) : (
-                      <div className="like-notifications-empty">
-                        <svg viewBox="0 0 24 24">
-                          <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                      <div className="like-notifications-empty" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px', color: 'rgba(255,255,255,0.4)', gap: 12 }}>
+                        <svg viewBox="0 0 24 24" style={{ width: 48, height: 48, fill: 'currentColor' }}>
+                          <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z" />
                         </svg>
-                        <p>还没有人赞过你的作品</p>
+                        <p>暂无新消息通知</p>
                       </div>
                   )}
                 </div>
@@ -3249,6 +3586,18 @@ export default function App() {
                               🎥 选定视频: {uploadVideo.name} ({(uploadVideo.size / 1024 / 1024).toFixed(2)} MB)
                             </div>
                         )}
+                      </div>
+
+                      <div className="ai-copy-panel">
+                        <button
+                            type="button"
+                            className="ai-copy-btn"
+                            onClick={handleGenerateAiCopy}
+                            disabled={!uploadVideo || isGeneratingCopy}
+                        >
+                          {isGeneratingCopy ? 'AI 生成中...' : 'AI 生成文案'}
+                        </button>
+                        <span>根据视频首帧自动生成标题、简介和话题</span>
                       </div>
 
                       <div className="upload-form-group">
@@ -3344,40 +3693,70 @@ export default function App() {
             </div>
         )}
 
-        {/* Share to Friend Modal */}
-        {isShareOpen && (
-            <div className="modal-overlay" onClick={() => { setIsShareOpen(false); setUserSearchQuery(''); setUserSearchResults([]); }}>
-              <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
-                <button className="modal-close-btn" onClick={() => { setIsShareOpen(false); setUserSearchQuery(''); setUserSearchResults([]); }}>
+        {/* Profile Follow / Follower Modal */}
+        {profileRelationModal && (
+            <div className="modal-overlay" onClick={closeProfileRelationModal}>
+              <div className="modal-content profile-relations-modal" onClick={e => e.stopPropagation()}>
+                <button className="modal-close-btn" onClick={closeProfileRelationModal}>
                   <svg viewBox="0 0 24 24">
                     <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
                   </svg>
                 </button>
 
-                <h3>转发视频给好友</h3>
+                <h3>{profileRelationModal === 'following' ? '我关注的人' : '我的粉丝'} ({profileRelationUsers.length})</h3>
 
-                <div style={{ marginBottom: 16 }}>
-                  <input
-                      className="user-search-input"
-                      type="text"
-                      placeholder="搜索用户 (输入用户名)..."
-                      value={userSearchQuery}
-                      onChange={e => {
-                        setUserSearchQuery(e.target.value);
-                        searchUsers(e.target.value);
-                      }}
-                      autoFocus
-                  />
+                <div className="profile-relations-list">
+                  {isLoadingProfileRelations ? (
+                      <div className="profile-relations-empty">
+                        <div className="loading-spinner" />
+                        <span>加载中...</span>
+                      </div>
+                  ) : profileRelationUsers.length > 0 ? (
+                      profileRelationUsers.map(u => (
+                          <button
+                              key={`${profileRelationModal}-${u.id}`}
+                              type="button"
+                              className="profile-relation-user"
+                              onClick={() => openProfileFromRelationModal(u.id)}
+                          >
+                            <img src={getAvatarUrl(u)} alt={u.username} />
+                            <span className="profile-relation-user-info">
+                              <strong>@{u.username}</strong>
+                              {u.displayName && <span>{u.displayName}</span>}
+                            </span>
+                            {u.isFriend && <span className="profile-relation-badge">好友</span>}
+                          </button>
+                      ))
+                  ) : (
+                      <div className="profile-relations-empty">
+                        {profileRelationModal === 'following' ? '还没有关注任何人' : '还没有粉丝'}
+                      </div>
+                  )}
                 </div>
+              </div>
+            </div>
+        )}
 
-                <div className="user-search-results" style={{ maxHeight: 300, overflowY: 'auto' }}>
-                  {isSearchingUsers ? (
+        {/* Share to Friend Modal */}
+        {isShareOpen && (
+            <div className="modal-overlay" onClick={() => { setIsShareOpen(false); }}>
+              <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
+                <button className="modal-close-btn" onClick={() => { setIsShareOpen(false); }}>
+                  <svg viewBox="0 0 24 24">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                  </svg>
+                </button>
+
+                <h3>分享视频给好友</h3>
+
+                <div className="user-search-results" style={{ maxHeight: 300, overflowY: 'auto', marginTop: 16 }}>
+                  {isLoadingFriends ? (
                       <div style={{ textAlign: 'center', padding: 20 }}>
                         <div className="loading-spinner" style={{ margin: '0 auto 10px' }} />
-                        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>搜索中...</span>
+                        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>加载好友列表中...</span>
                       </div>
-                  ) : userSearchResults.length > 0 ? (
-                      userSearchResults.map(u => (
+                  ) : friends.length > 0 ? (
+                      friends.map(u => (
                           <div
                               key={u.id}
                               className="user-search-result-item"
@@ -3400,16 +3779,12 @@ export default function App() {
                                   <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{u.displayName}</div>
                               )}
                             </div>
-                            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>ID: {u.id}</span>
+                            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>好友</span>
                           </div>
                       ))
-                  ) : userSearchQuery.trim() ? (
-                      <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)', fontSize: 13 }}>
-                        未找到匹配的用户
-                      </div>
                   ) : (
                       <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)', fontSize: 13 }}>
-                        输入用户名搜索好友
+                        你还没有互关好友。
                       </div>
                   )}
                 </div>
