@@ -209,6 +209,7 @@ export default function App() {
   const curatedFeedRef = useRef(false);
   const preloadedMediaRef = useRef([]);
   const shownDanmakuIdsRef = useRef(new Set());
+  const lastTimeRef = useRef(0);
 
   const DANMAKU_COLORS = ['#ffffff', '#ffeb3b', '#ff5252', '#69f0ae', '#40c4ff', '#ff80ab', '#b388ff'];
   const DANMAKU_EMOJIS = ['😀', '😂', '😍', '👍', '❤️', '🔥', '🎉', '💯', '😭', '🤣', '✨', '🥰', '😎', '🤔', '👏', '🙏'];
@@ -305,10 +306,12 @@ export default function App() {
       setDanmakuList([]);
       setActiveDanmaku([]);
       shownDanmakuIdsRef.current = new Set();
+      lastTimeRef.current = 0;
       return;
     }
     const videoId = videos[currentIndex].id;
     shownDanmakuIdsRef.current = new Set();
+    lastTimeRef.current = 0;
     setActiveDanmaku([]);
     setIsDanmakuEmojiOpen(false);
     fetchDanmakuForVideo(videoId);
@@ -996,7 +999,6 @@ export default function App() {
       return Math.abs(appearAt - currentTime) < 0.35 && !shownDanmakuIdsRef.current.has(item.id);
     });
     dueItems.forEach((item) => {
-      shownDanmakuIdsRef.current.add(item.id);
       pushDanmakuItem(item);
     });
   };
@@ -1770,6 +1772,14 @@ export default function App() {
   const handleVideoTimeUpdate = () => {
     if (!videoRef.current) return;
     const currentTime = videoRef.current.currentTime || 0;
+    
+    // Reset shown danmaku tracker if user rewound the video or if it looped
+    if (currentTime < lastTimeRef.current - 0.5) {
+      shownDanmakuIdsRef.current = new Set();
+      setActiveDanmaku([]);
+    }
+    lastTimeRef.current = currentTime;
+
     setPlaybackProgress({
       currentTime,
       duration: Number.isFinite(videoRef.current.duration) ? videoRef.current.duration : 0
