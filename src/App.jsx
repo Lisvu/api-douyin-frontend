@@ -1435,14 +1435,58 @@ export default function App() {
     setIsLoadingFriends(true);
     const data = await apiFetch(`${API_PREFIX}/users/me/friends`);
     setIsLoadingFriends(false);
-    if (data && data.success) setFriends(data.friends || []);
+    if (data && data.success) {
+      const friends = data.friends || [];
+      setFriends(friends);
+      if (friends.length > 0) {
+        setIsLoadingFeed(true);
+        const videoLists = await Promise.all(
+            friends.map(f => apiFetch(`${API_PREFIX}/users/${f.id}/videos?limit=20`))
+        );
+        setIsLoadingFeed(false);
+        const allVideos = videoLists
+            .filter(d => d && d.success)
+            .flatMap(d => d.videos || [])
+            .map(normalizeFeedVideo)
+            .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+        setVideos(allVideos);
+        setCurrentIndex(0);
+        setAllViewed(false);
+        setFeedPagination({ nextCursor: null, hasMore: false });
+      } else {
+        setVideos([]);
+      }
+    }
   };
 
   const fetchFollowing = async () => {
     setIsLoadingFollowing(true);
     const data = await apiFetch(`${API_PREFIX}/users/me/following`);
     setIsLoadingFollowing(false);
-    if (data && data.success) setFollowingUsers(data.users || []);
+    if (data && data.success) {
+      const users = data.users || [];
+      setFollowingUsers(users);
+      // 拉所有关注的人的视频合并播放
+      if (users.length > 0) {
+        setIsLoadingFeed(true);
+        const videoLists = await Promise.all(
+            users.map(u => apiFetch(`${API_PREFIX}/users/${u.id}/videos?limit=20`))
+        );
+        setIsLoadingFeed(false);
+        const allVideos = videoLists
+            .filter(d => d && d.success)
+            .flatMap(d => d.videos || [])
+            .map(normalizeFeedVideo)
+            // 按发布时间降序排列
+            .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+        setVideos(allVideos);
+        setCurrentIndex(0);
+        setAllViewed(false);
+        setFeedPagination({ nextCursor: null, hasMore: false });
+      } else {
+        setVideos([]);
+      }
+    }
   };
 
   const fetchUserVideos = async (targetUser) => {
@@ -2373,12 +2417,7 @@ export default function App() {
                         </div>
 
                         <main className="web-feed-main" style={{ flex: 1 }}>
-                          {!selectedFollowingUser ? (
-                              <div className="web-feed-center">
-                                <div style={{ fontSize: 48, marginBottom: 16 }}>👈</div>
-                                <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)' }}>从左侧选择一个关注的人<br />查看他发布的视频</p>
-                              </div>
-                          ) : isLoadingFeed ? (
+                          {isLoadingFeed ? (
                               <div className="web-feed-center"><div className="loading-spinner" /><p>加载中...</p></div>
                           ) : videos.length > 0 && activeVideo ? (
                               <div className={`web-video-stage ${isVideoZoomed ? 'is-zoomed' : ''}`} ref={videoStageRef} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
@@ -2454,9 +2493,9 @@ export default function App() {
                                     <div className="action-icon-circle">
                                       <svg viewBox="0 0 24 24">
                                         {activeVideo.favorited ? (
-                                          <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                                            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
                                         ) : (
-                                          <path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z" />
+                                            <path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z" />
                                         )}
                                       </svg>
                                     </div>
@@ -2486,8 +2525,13 @@ export default function App() {
                                   {currentIndex + 1} / {videos.length}{isLoadingMoreFeed ? ' · 加载中...' : ''}
                                 </div>
                               </div>
-                          ) : (
+                          ) : selectedFollowingUser ? (
                               <div className="web-feed-center"><p>@{selectedFollowingUser.username} 还没有发布任何视频</p></div>
+                          ) : (
+                              <div className="web-feed-center">
+                                <div style={{ fontSize: 48, marginBottom: 16 }}>👈</div>
+                                <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)' }}>从左侧选择一个关注的人<br />查看他发布的视频</p>
+                              </div>
                           )}
                         </main>
                       </div>
@@ -2655,12 +2699,7 @@ export default function App() {
 
                         {/* 右侧视频区域 */}
                         <main className="web-feed-main" style={{ flex: 1 }}>
-                          {!selectedFollowingUser ? (
-                              <div className="web-feed-center">
-                                <div style={{ fontSize: 48, marginBottom: 16 }}>👈</div>
-                                <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)' }}>从左侧选择一个朋友<br />查看他发布的视频</p>
-                              </div>
-                          ) : isLoadingFeed ? (
+                          {isLoadingFeed ? (
                               <div className="web-feed-center"><div className="loading-spinner" /><p>加载中...</p></div>
                           ) : videos.length > 0 && activeVideo ? (
                               <div className={`web-video-stage ${isVideoZoomed ? 'is-zoomed' : ''}`} ref={videoStageRef} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
@@ -2695,6 +2734,7 @@ export default function App() {
                                     </div>
                                   </div>
                                 </div>
+
                                 <div className="web-action-bar">
                                   <div
                                       className="sidebar-avatar-wrapper clickable-profile"
@@ -2735,9 +2775,9 @@ export default function App() {
                                     <div className="action-icon-circle">
                                       <svg viewBox="0 0 24 24">
                                         {activeVideo.favorited ? (
-                                          <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                                            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
                                         ) : (
-                                          <path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z" />
+                                            <path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z" />
                                         )}
                                       </svg>
                                     </div>
@@ -2753,14 +2793,27 @@ export default function App() {
                                     <span className="action-count">分享给我</span>
                                   </button>
                                 </div>
+
                                 <div className="web-nav-arrows">
-                                  <button className="arrow-nav-btn" onClick={handlePrevVideo} disabled={currentIndex === 0}><svg style={{ width: 22, height: 22, fill: 'currentColor' }} viewBox="0 0 24 24"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" /></svg></button>
-                                  <button className="arrow-nav-btn" onClick={handleNextVideo} disabled={currentIndex === videos.length - 1 && !feedPagination.hasMore}><svg style={{ width: 22, height: 22, fill: 'currentColor' }} viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" /></svg></button>
+                                  <button className="arrow-nav-btn" onClick={handlePrevVideo} disabled={currentIndex === 0}>
+                                    <svg style={{ width: 22, height: 22, fill: 'currentColor' }} viewBox="0 0 24 24"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" /></svg>
+                                  </button>
+                                  <button className="arrow-nav-btn" onClick={handleNextVideo} disabled={currentIndex === videos.length - 1 && !feedPagination.hasMore}>
+                                    <svg style={{ width: 22, height: 22, fill: 'currentColor' }} viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" /></svg>
+                                  </button>
                                 </div>
-                                <div className="web-feed-progress">{currentIndex + 1} / {videos.length}{isLoadingMoreFeed ? ' · 加载中...' : ''}</div>
+
+                                <div className="web-feed-progress">
+                                  {currentIndex + 1} / {videos.length}{isLoadingMoreFeed ? ' · 加载中...' : ''}
+                                </div>
                               </div>
-                          ) : (
+                          ) : selectedFollowingUser ? (
                               <div className="web-feed-center"><p>@{selectedFollowingUser.username} 还没有发布任何视频</p></div>
+                          ) : (
+                              <div className="web-feed-center">
+                                <div style={{ fontSize: 48, marginBottom: 16 }}>👈</div>
+                                <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)' }}>从左侧选择一个朋友<br />查看他发布的视频</p>
+                              </div>
                           )}
                         </main>
                       </div>
