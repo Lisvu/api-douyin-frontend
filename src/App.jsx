@@ -126,9 +126,6 @@ export default function App() {
 
   // Modals & Drawers state
   const [isUploadOpen, setIsUploadOpen] = useState(false);
-  const [isMyVideosOpen, setIsMyVideosOpen] = useState(false);
-  const [myVideos, setMyVideos] = useState([]);
-  const [myVideosPagination, setMyVideosPagination] = useState({ nextCursor: null, hasMore: false });
   const [isLikeNotificationsOpen, setIsLikeNotificationsOpen] = useState(false);
   const [likeNotifications, setLikeNotifications] = useState([]);
   const [likeNotificationUnreadCount, setLikeNotificationUnreadCount] = useState(0);
@@ -184,9 +181,22 @@ export default function App() {
   const [devLogs, setDevLogs] = useState([]);
   const [logDetailModal, setLogDetailModal] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
-  // Batch delete management for "我的作品"
+  // Batch delete management on own profile page
   const [batchManageMode, setBatchManageMode] = useState(false);
   const [selectedVideoIds, setSelectedVideoIds] = useState(new Set());
+
+  // Danmaku & watch later
+  const [danmakuEnabled, setDanmakuEnabled] = useState(true);
+  const [danmakuList, setDanmakuList] = useState([]);
+  const [activeDanmaku, setActiveDanmaku] = useState([]);
+  const [danmakuDraft, setDanmakuDraft] = useState('');
+  const [isPostingDanmaku, setIsPostingDanmaku] = useState(false);
+  const [isDanmakuEmojiOpen, setIsDanmakuEmojiOpen] = useState(false);
+  const [inWatchLater, setInWatchLater] = useState(false);
+  const [watchLaterCount, setWatchLaterCount] = useState(0);
+  const [watchLaterVideos, setWatchLaterVideos] = useState([]);
+  const [watchLaterPagination, setWatchLaterPagination] = useState({ nextCursor: null, hasMore: false });
+  const [isLoadingWatchLater, setIsLoadingWatchLater] = useState(false);
 
   // UI Toast message
   const [toast, setToast] = useState(null);
@@ -198,6 +208,10 @@ export default function App() {
   const loadingMoreFeedRef = useRef(false);
   const curatedFeedRef = useRef(false);
   const preloadedMediaRef = useRef([]);
+  const shownDanmakuIdsRef = useRef(new Set());
+
+  const DANMAKU_COLORS = ['#ffffff', '#ffeb3b', '#ff5252', '#69f0ae', '#40c4ff', '#ff80ab', '#b388ff'];
+  const DANMAKU_EMOJIS = ['😀', '😂', '😍', '👍', '❤️', '🔥', '🎉', '💯', '😭', '🤣', '✨', '🥰', '😎', '🤔', '👏', '🙏'];
 
   const [searchPage, setSearchPage] = useState(false);
   const [searchPageQuery, setSearchPageQuery] = useState('');
@@ -247,12 +261,15 @@ export default function App() {
     let intervalId;
     if (token) {
       fetchLikeNotificationUnreadCount();
+      fetchWatchLaterVideos();
       intervalId = setInterval(() => {
         fetchLikeNotificationUnreadCount();
       }, 15000);
     } else {
       setLikeNotificationUnreadCount(0);
       setLikeNotifications([]);
+      setWatchLaterCount(0);
+      setWatchLaterVideos([]);
     }
     return () => {
       if (intervalId) clearInterval(intervalId);
@@ -282,6 +299,25 @@ export default function App() {
       }
     }
   }, [currentIndex, videos, currentView]);
+
+  useEffect(() => {
+    if (currentView !== 'feed' || !videos[currentIndex]?.id) {
+      setDanmakuList([]);
+      setActiveDanmaku([]);
+      shownDanmakuIdsRef.current = new Set();
+      return;
+    }
+    const videoId = videos[currentIndex].id;
+    shownDanmakuIdsRef.current = new Set();
+    setActiveDanmaku([]);
+    setIsDanmakuEmojiOpen(false);
+    fetchDanmakuForVideo(videoId);
+    if (token) {
+      fetchWatchLaterStatus(videoId);
+    } else {
+      setInWatchLater(false);
+    }
+  }, [currentIndex, videos, currentView, token]);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -333,6 +369,8 @@ export default function App() {
       setAllViewed(false);
       setFeedPagination({ nextCursor: null, hasMore: false });
       fetchRecommendations();
+    } else if (navTab === 'watchlater' && token) {
+      fetchWatchLaterVideos();
     }
   }, [navTab, token]);
 
@@ -622,6 +660,23 @@ export default function App() {
     });
   };
 
+  const handlePlayWatchLaterVideo = (videoItem, index) => {
+    startSingleVideoPlayback(videoItem, {
+      queue: watchLaterVideos,
+      startIndex: index >= 0 ? index : 0,
+    });
+  };
+
+  const openWatchLaterTab = () => {
+    if (!token) {
+      showToast('请先登录', true);
+      return;
+    }
+    curatedFeedRef.current = false;
+    setCurrentView('feed');
+    setNavTab('watchlater');
+  };
+
   const recordVideoView = async (videoId) => {
     await apiFetch(`${API_PREFIX}/videos/${videoId}/views`, { method: 'POST', silent: true, timeoutMs: 15000 });
   };
@@ -834,6 +889,211 @@ export default function App() {
     }
   };
 
+  const fetchDanmakuForVideo = async (videoId) => {
+    const data = await apiFetch(`${API_PREFIX}/videos/${videoId}/danmaku`, { silent: true });
+    if (data && data.success) {
+      setDanmakuList(data.danmaku || []);
+    } else {
+      setDanmakuList([]);
+    }
+  };
+
+  const fetchWatchLaterStatus = async (videoId) => {
+    const data = await apiFetch(`${API_PREFIX}/videos/${videoId}/watch-later`, { silent: true });
+    if (data && data.success) {
+      setInWatchLater(!!data.inWatchLater);
+      setWatchLaterCount(data.watchLaterCount ?? 0);
+    }
+  };
+
+  const fetchWatchLaterVideos = async (cursor = null, append = false) => {
+    if (!token) return;
+    setIsLoadingWatchLater(true);
+    const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+    const data = await apiFetch(`${API_PREFIX}/users/me/watch-later?limit=24${cursorParam}`);
+    setIsLoadingWatchLater(false);
+    if (data && data.success) {
+      const fetchedVideos = (data.videos || []).map(normalizeFeedVideo);
+      setWatchLaterVideos(prev => append ? [...prev, ...fetchedVideos] : fetchedVideos);
+      setWatchLaterPagination({
+        nextCursor: data.pagination?.nextCursor ?? null,
+        hasMore: data.pagination?.hasMore ?? false
+      });
+      if (typeof data.totalCount === 'number') {
+        setWatchLaterCount(data.totalCount);
+      }
+    }
+  };
+
+  const toggleWatchLater = async (videoId, e) => {
+    e?.stopPropagation();
+    if (!token) {
+      showToast('请先登录', true);
+      return;
+    }
+    const endpoint = `${API_PREFIX}/videos/${videoId}/watch-later`;
+    const data = inWatchLater
+        ? await apiFetch(endpoint, { method: 'DELETE' })
+        : await apiFetch(endpoint, { method: 'POST' });
+    if (data && data.success) {
+      setInWatchLater(!!data.inWatchLater);
+      setWatchLaterCount(data.watchLaterCount ?? watchLaterCount);
+      showToast(data.inWatchLater ? '已添加至稍后再看' : '已从稍后再看移除');
+      if (navTab === 'watchlater') {
+        await fetchWatchLaterVideos();
+      }
+    } else if (data) {
+      showToast(data.message || '操作失败', true);
+    }
+  };
+
+  const handlePostDanmaku = async (e) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    const content = danmakuDraft.trim();
+    if (!content || !activeVideo?.id || isPostingDanmaku) return;
+    if (!token) {
+      showToast('请先登录', true);
+      return;
+    }
+    const appearAt = videoRef.current?.currentTime ?? 0;
+    setIsPostingDanmaku(true);
+    const color = DANMAKU_COLORS[Math.floor(Math.random() * DANMAKU_COLORS.length)];
+    const data = await apiFetch(`${API_PREFIX}/videos/${activeVideo.id}/danmaku`, {
+      method: 'POST',
+      body: JSON.stringify({ content, appearAt, color })
+    });
+    setIsPostingDanmaku(false);
+    if (data && data.success) {
+      setDanmakuDraft('');
+      if (data.danmaku) {
+        setDanmakuList(prev => [...prev, data.danmaku].sort((a, b) => a.appearAt - b.appearAt));
+        pushDanmakuItem(data.danmaku);
+      } else {
+        await fetchDanmakuForVideo(activeVideo.id);
+      }
+      showToast('弹幕发送成功');
+    } else if (data) {
+      showToast(data.message || '弹幕发送失败', true);
+    }
+  };
+
+  const pushDanmakuItem = (item) => {
+    if (!item || shownDanmakuIdsRef.current.has(item.id)) return;
+    shownDanmakuIdsRef.current.add(item.id);
+    const track = Math.floor(Math.random() * 8);
+    const key = `${item.id}-${Date.now()}-${Math.random()}`;
+    setActiveDanmaku(prev => [...prev, { ...item, key, track }]);
+    window.setTimeout(() => {
+      setActiveDanmaku(prev => prev.filter(d => d.key !== key));
+    }, 9000);
+  };
+
+  const spawnDanmakuAtCurrentTime = (currentTime) => {
+    if (!danmakuEnabled || danmakuList.length === 0) return;
+    const dueItems = danmakuList.filter((item) => {
+      const appearAt = Number(item.appearAt ?? item.appear_at ?? 0);
+      return Math.abs(appearAt - currentTime) < 0.35 && !shownDanmakuIdsRef.current.has(item.id);
+    });
+    dueItems.forEach((item) => {
+      shownDanmakuIdsRef.current.add(item.id);
+      pushDanmakuItem(item);
+    });
+  };
+
+  const appendDanmakuEmoji = (emoji) => {
+    setDanmakuDraft((prev) => {
+      const next = `${prev}${emoji}`;
+      return next.length > 100 ? next.slice(0, 100) : next;
+    });
+    setIsDanmakuEmojiOpen(false);
+  };
+
+  const renderVideoPlayerExtras = () => (
+    <>
+      {danmakuEnabled && (
+        <div className="danmaku-layer" onClick={(e) => e.stopPropagation()}>
+          {activeDanmaku.map((item) => (
+            <span
+              key={item.key}
+              className="danmaku-item"
+              style={{
+                top: `${8 + item.track * 6}%`,
+                color: item.color || '#fff',
+                animationDuration: `${7 + (item.track % 3)}s`
+              }}
+            >
+              {item.content}
+            </span>
+          ))}
+        </div>
+      )}
+      <button
+        type="button"
+        className={`watch-later-overlay-btn ${inWatchLater ? 'active' : ''}`}
+        onClick={(e) => toggleWatchLater(activeVideo.id, e)}
+        title={inWatchLater ? '已在稍后再看' : '添加至稍后再看'}
+      >
+        <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+        <span>{inWatchLater ? '已在稍后再看' : '添加至稍后再看'}</span>
+      </button>
+      <div className="web-video-bottom-dock" onClick={(e) => e.stopPropagation()}>
+        <form className="danmaku-compose-bar" onSubmit={handlePostDanmaku}>
+          <button
+            type="button"
+            className="danmaku-emoji-btn"
+            onClick={() => setIsDanmakuEmojiOpen(prev => !prev)}
+            title="添加表情"
+            aria-label="添加表情"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z" />
+            </svg>
+          </button>
+          {isDanmakuEmojiOpen && (
+            <div className="danmaku-emoji-picker" role="listbox" aria-label="选择表情">
+              {DANMAKU_EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  className="danmaku-emoji-item"
+                  onClick={() => appendDanmakuEmoji(emoji)}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
+          <input
+            type="text"
+            placeholder="发一条友好的弹幕吧"
+            value={danmakuDraft}
+            onChange={(e) => setDanmakuDraft(e.target.value)}
+            onFocus={() => setIsDanmakuEmojiOpen(false)}
+            maxLength={100}
+            disabled={isPostingDanmaku}
+          />
+          <button
+            type="submit"
+            className="danmaku-send-btn"
+            disabled={isPostingDanmaku || !danmakuDraft.trim()}
+          >
+            {isPostingDanmaku ? '发送中' : '发送'}
+          </button>
+        </form>
+        <button
+          type="button"
+          className={`danmaku-toggle-btn ${danmakuEnabled ? 'active' : ''}`}
+          onClick={() => setDanmakuEnabled(prev => !prev)}
+          title={danmakuEnabled ? '关闭弹幕' : '开启弹幕'}
+          aria-label={danmakuEnabled ? '关闭弹幕' : '开启弹幕'}
+        >
+          <span className="danmaku-toggle-icon">弹</span>
+        </button>
+      </div>
+    </>
+  );
+
   const renderDownloadButton = (video) => (
     <button
       className={`action-item-button special-action ${downloadingVideoId === video.id ? 'is-loading' : ''}`}
@@ -858,19 +1118,6 @@ export default function App() {
     const logsData = await apiFetch(`${API_PREFIX}/admin/request-logs`, { silent: true, timeoutMs: 15000 });
     if (logsData && logsData.success) {
       setDevLogs(logsData.logs || []);
-    }
-  };
-
-  const fetchMyVideos = async (cursor = null, append = false) => {
-    const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
-    const data = await apiFetch(`${API_PREFIX}/users/me/videos?limit=6${cursorParam}`);
-    if (data && data.success) {
-      const fetchedVideos = (data.videos || []).map(normalizeFeedVideo);
-      setMyVideos(prev => append ? [...prev, ...fetchedVideos] : fetchedVideos);
-      setMyVideosPagination({
-        nextCursor: data.pagination?.nextCursor ?? null,
-        hasMore: data.pagination?.hasMore ?? false
-      });
     }
   };
 
@@ -1016,8 +1263,22 @@ export default function App() {
     }
   };
 
+  const resetBatchManage = () => {
+    setBatchManageMode(false);
+    setSelectedVideoIds(new Set());
+  };
+
+  const isOwnPublishedProfile = profileUserId === user?.id && profileTab === 'published';
+
+  const refreshOwnPublishedProfile = async () => {
+    if (!user?.id) return;
+    await fetchProfileVideos('published', user.id);
+    await fetchUserProfile(user.id);
+  };
+
   const openUserProfile = async (userId) => {
     if (!userId) return;
+    resetBatchManage();
     setProfileUserId(userId);
     setProfileTab('published');
     setProfileVideos([]);
@@ -1040,6 +1301,7 @@ export default function App() {
   };
 
   const closeUserProfile = () => {
+    resetBatchManage();
     setCurrentView('feed');
     if (navTab === 'mine') {
       setNavTab('recommend');
@@ -1083,8 +1345,7 @@ export default function App() {
 
   const switchProfileTab = async (tab) => {
     if (tab === profileTab) return;
-    setBatchManageMode(false);
-    setSelectedVideoIds(new Set());
+    resetBatchManage();
     setProfileTab(tab);
     setProfileVideos([]);
     setProfileVideosPagination({ nextCursor: null, hasMore: false });
@@ -1322,10 +1583,11 @@ export default function App() {
         setUploadCover(null);
         if (data.data) {
           startSingleVideoPlayback(data.data);
-        } else {
-          fetchRecommendations();
         }
-        fetchMyVideos();
+        fetchRecommendations();
+        if (user?.id && currentView === 'profile' && profileUserId === user.id) {
+          refreshOwnPublishedProfile();
+        }
         if (user?.role === 'ADMIN' && currentView === 'admin') {
           fetchDevDashboardData();
         }
@@ -1348,8 +1610,8 @@ export default function App() {
     if (data && data.success) {
       showToast('视频已成功下架！');
       fetchMyVideos();
-      if (currentView === 'profile' && profileUserId === user?.id) {
-        fetchProfileVideos('published', profileUserId);
+      if (isOwnPublishedProfile) {
+        await refreshOwnPublishedProfile();
       }
       fetchRecommendations();
       if (user?.role === 'ADMIN' && currentView === 'admin') {
@@ -1380,11 +1642,8 @@ export default function App() {
   };
 
   const selectAllVideos = () => {
-    const targetVideos = (currentView === 'profile' && profileUserId === user?.id && profileTab === 'published')
-      ? profileVideos
-      : myVideos;
-    if (targetVideos.length === 0) return;
-    const allIds = new Set(targetVideos.map(v => v.id));
+    if (!isOwnPublishedProfile || profileVideos.length === 0) return;
+    const allIds = new Set(profileVideos.map(v => v.id));
     if (selectedVideoIds.size === allIds.size) {
       setSelectedVideoIds(new Set());
     } else {
@@ -1404,12 +1663,10 @@ export default function App() {
     });
     if (data && data.success) {
       showToast(`成功删除 ${ids.length} 个视频`);
-      setBatchManageMode(false);
-      setSelectedVideoIds(new Set());
-      if (currentView === 'profile' && profileUserId === user?.id) {
-        fetchProfileVideos('published', profileUserId);
-      } else {
-        fetchMyVideos();
+      resetBatchManage();
+      fetchMyVideos();
+      if (isOwnPublishedProfile) {
+        await refreshOwnPublishedProfile();
       }
       fetchRecommendations();
       if (user?.role === 'ADMIN' && currentView === 'admin') {
@@ -1418,19 +1675,6 @@ export default function App() {
     } else if (data) {
       showToast(data.message || '批量删除失败', true);
     }
-  };
-
-  const handlePlayMyVideo = (index) => {
-    curatedFeedRef.current = true;
-    loadingMoreFeedRef.current = false;
-    setIsLoadingMoreFeed(false);
-    setFeedPagination({ nextCursor: null, hasMore: false });
-    setVideos(myVideos);
-    setCurrentIndex(index);
-    setIsMyVideosOpen(false);
-    setAllViewed(false);
-    setNavTab('recommend');
-    setCurrentView('feed');
   };
 
   const handlePlayMyVideoItem = (videoItem) => {
@@ -1481,15 +1725,19 @@ export default function App() {
 
   const handleVideoTimeUpdate = () => {
     if (!videoRef.current) return;
+    const currentTime = videoRef.current.currentTime || 0;
     setPlaybackProgress({
-      currentTime: videoRef.current.currentTime || 0,
+      currentTime,
       duration: Number.isFinite(videoRef.current.duration) ? videoRef.current.duration : 0
     });
+    spawnDanmakuAtCurrentTime(currentTime);
   };
 
   const handleVideoLoadedMetadata = () => {
     if (!videoRef.current) return;
     videoRef.current.playbackRate = playbackRate;
+    shownDanmakuIdsRef.current = new Set();
+    setActiveDanmaku([]);
     handleVideoTimeUpdate();
   };
 
@@ -1501,6 +1749,8 @@ export default function App() {
     const rect = e.currentTarget.getBoundingClientRect();
     const ratio = Math.min(Math.max((e.clientX - rect.left) / rect.width, 0), 1);
     videoRef.current.currentTime = duration * ratio;
+    shownDanmakuIdsRef.current = new Set();
+    setActiveDanmaku([]);
     handleVideoTimeUpdate();
   };
 
@@ -1613,11 +1863,6 @@ export default function App() {
         setCurrentIndex(prev => prev - 1);
       }
     }
-  };
-
-  const openMyVideosPanel = () => {
-    setIsMyVideosOpen(true);
-    fetchMyVideos();
   };
 
   const openLikedVideosPanel = () => {
@@ -1945,6 +2190,11 @@ export default function App() {
               <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
               <span>朋友</span>
             </button>
+            <button className={`sidebar-nav-item ${navTab === 'watchlater' ? 'active' : ''}`} onClick={openWatchLaterTab}>
+              <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+              <span>稍后再看</span>
+              {watchLaterCount > 0 && <em className="sidebar-nav-badge">{watchLaterCount}</em>}
+            </button>
             <button className={`sidebar-nav-item ${navTab === 'mine' ? 'active' : ''}`} onClick={openMyProfile}>
               <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
               <span>我的</span>
@@ -2032,6 +2282,62 @@ export default function App() {
                       </main>
                   )}
 
+                  {/* 稍后再看合集 */}
+                  {navTab === 'watchlater' && (
+                      <main className="featured-main watch-later-main">
+                        <div className="watch-later-header">
+                          <h2>稍后再看</h2>
+                          <p>{watchLaterCount > 0 ? `共 ${watchLaterCount} 个视频` : '把想晚点看的视频加进来'}</p>
+                        </div>
+                        <div className="featured-grid-scroll">
+                          {isLoadingWatchLater && watchLaterVideos.length === 0 ? (
+                              <div className="featured-loading">
+                                <div className="loading-spinner" />
+                                <p>稍后再看加载中...</p>
+                              </div>
+                          ) : watchLaterVideos.length > 0 ? (
+                              <>
+                                <div className="featured-video-grid">
+                                  {watchLaterVideos.map((wv, idx) => (
+                                      <article
+                                          key={`watchlater-${wv.id}`}
+                                          className="featured-video-card"
+                                          onClick={() => handlePlayWatchLaterVideo(wv, idx)}
+                                      >
+                                        <div className="featured-video-thumb">
+                                          <img src={getMediaUrl(wv.cover_url)} alt={wv.title} loading="lazy" />
+                                          <div className="featured-video-likes">
+                                            <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                                            <span>{formatLikeCount(wv.likeCount ?? wv.likes_count ?? 0)}</span>
+                                          </div>
+                                        </div>
+                                        <h3 className="featured-video-title">{wv.title}</h3>
+                                        <div className="featured-video-meta">
+                                          <span>@{wv.creator_name || '创作者'}</span>
+                                        </div>
+                                      </article>
+                                  ))}
+                                </div>
+                                <div className="featured-load-more">
+                                  <button
+                                      type="button"
+                                      disabled={!watchLaterPagination.hasMore || isLoadingWatchLater}
+                                      onClick={() => fetchWatchLaterVideos(watchLaterPagination.nextCursor, true)}
+                                  >
+                                    {isLoadingWatchLater ? '加载中...' : watchLaterPagination.hasMore ? '加载更多' : '没有更多了'}
+                                  </button>
+                                </div>
+                              </>
+                          ) : (
+                              <div className="featured-empty">
+                                <p>还没有加入稍后再看的视频</p>
+                                <button type="button" className="reset-views-btn" onClick={() => setNavTab('recommend')}>去推荐页逛逛</button>
+                              </div>
+                          )}
+                        </div>
+                      </main>
+                  )}
+
                   {/* 关注页：左侧用户列表 + 右侧视频 */}
                   {navTab === 'following' && (
                       <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
@@ -2075,12 +2381,13 @@ export default function App() {
                           ) : isLoadingFeed ? (
                               <div className="web-feed-center"><div className="loading-spinner" /><p>加载中...</p></div>
                           ) : videos.length > 0 && activeVideo ? (
-                              <div className="web-video-stage" ref={videoStageRef} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+                              <div className={`web-video-stage ${isVideoZoomed ? 'is-zoomed' : ''}`} ref={videoStageRef} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
                                 <div className="web-video-bg" style={{ backgroundImage: `url(${getMediaUrl(activeVideo.cover_url)})`, backgroundSize: 'cover', backgroundPosition: 'center', filter: 'blur(40px) brightness(0.4) saturate(1.5)', transform: 'scale(1.1)' }} />
                                 <div className={`web-video-wrapper ${isVideoZoomed ? 'is-zoomed' : ''}`} onClick={togglePlayState}>
                                   <video ref={videoRef} className={`web-video-player ${isVideoZoomed ? 'is-zoomed' : ''}`} loop muted={isMuted} preload="metadata" playsInline
                                          src={getMediaUrl(activeVideo.video_url)} poster={activeVideo.cover_url ? getMediaUrl(activeVideo.cover_url) : undefined}
                                          onTimeUpdate={handleVideoTimeUpdate} onLoadedMetadata={handleVideoLoadedMetadata} onError={handleVideoPlaybackError} />
+                                  {renderVideoPlayerExtras()}
                                   <div className="video-play-overlay">{playTriggerAnim && <div className="play-pause-icon-anim">{isPlaying ? <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg> : <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>}</div>}</div>
                                   <button className="web-mute-button" onClick={toggleMuted}>{isMuted ? <svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.62 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73L16.25 17.52c-.67.52-1.43.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg> : <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>}</button>
                                   <button className="web-zoom-button" onClick={toggleVideoZoom}>
@@ -2199,12 +2506,13 @@ export default function App() {
                               <button className="reset-views-btn" onClick={handleResetViews}>🔄 重置浏览历史以重新排序</button>
                             </div>
                         ) : videos.length > 0 && activeVideo ? (
-                            <div className="web-video-stage" ref={videoStageRef} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+                            <div className={`web-video-stage ${isVideoZoomed ? 'is-zoomed' : ''}`} ref={videoStageRef} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
                               <div className="web-video-bg" style={{ backgroundImage: `url(${getMediaUrl(activeVideo.cover_url)})`, backgroundSize: 'cover', backgroundPosition: 'center', filter: 'blur(40px) brightness(0.4) saturate(1.5)', transform: 'scale(1.1)' }} />
                               <div className={`web-video-wrapper ${isVideoZoomed ? 'is-zoomed' : ''}`} onClick={togglePlayState}>
                                 <video ref={videoRef} className={`web-video-player ${isVideoZoomed ? 'is-zoomed' : ''}`} loop muted={isMuted} preload="metadata" playsInline
                                        src={getMediaUrl(activeVideo.video_url)} poster={activeVideo.cover_url ? getMediaUrl(activeVideo.cover_url) : undefined}
                                        onTimeUpdate={handleVideoTimeUpdate} onLoadedMetadata={handleVideoLoadedMetadata} onError={handleVideoPlaybackError} />
+                                {renderVideoPlayerExtras()}
                                 <div className="video-play-overlay">{playTriggerAnim && <div className="play-pause-icon-anim">{isPlaying ? <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg> : <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>}</div>}</div>
                                 <button className="web-mute-button" onClick={toggleMuted}>{isMuted ? <svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.62 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73L16.25 17.52c-.67.52-1.43.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg> : <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>}</button>
                                 <button className="web-zoom-button" onClick={toggleVideoZoom}>
@@ -2355,12 +2663,13 @@ export default function App() {
                           ) : isLoadingFeed ? (
                               <div className="web-feed-center"><div className="loading-spinner" /><p>加载中...</p></div>
                           ) : videos.length > 0 && activeVideo ? (
-                              <div className="web-video-stage" ref={videoStageRef} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+                              <div className={`web-video-stage ${isVideoZoomed ? 'is-zoomed' : ''}`} ref={videoStageRef} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
                                 <div className="web-video-bg" style={{ backgroundImage: `url(${getMediaUrl(activeVideo.cover_url)})`, backgroundSize: 'cover', backgroundPosition: 'center', filter: 'blur(40px) brightness(0.4) saturate(1.5)', transform: 'scale(1.1)' }} />
                                 <div className={`web-video-wrapper ${isVideoZoomed ? 'is-zoomed' : ''}`} onClick={togglePlayState}>
                                   <video ref={videoRef} className={`web-video-player ${isVideoZoomed ? 'is-zoomed' : ''}`} loop muted={isMuted} preload="metadata" playsInline
                                          src={getMediaUrl(activeVideo.video_url)} poster={activeVideo.cover_url ? getMediaUrl(activeVideo.cover_url) : undefined}
                                          onTimeUpdate={handleVideoTimeUpdate} onLoadedMetadata={handleVideoLoadedMetadata} onError={handleVideoPlaybackError} />
+                                  {renderVideoPlayerExtras()}
                                   <div className="video-play-overlay">{playTriggerAnim && <div className="play-pause-icon-anim">{isPlaying ? <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg> : <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>}</div>}</div>
                                   <button className="web-mute-button" onClick={toggleMuted}>{isMuted ? <svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.62 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73L16.25 17.52c-.67.52-1.43.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg> : <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>}</button>
                                   <button className="web-zoom-button" onClick={toggleVideoZoom}>
@@ -2520,9 +2829,10 @@ export default function App() {
                         </div>
 
                         <div className="profile-videos-section">
-                          {profileUserId === user?.id && profileTab === 'published' && profileVideos.length > 0 && (
-                            <div className="my-videos-toolbar" style={{ marginBottom: 16 }}>
+                          {isOwnPublishedProfile && (
+                            <div className="my-videos-toolbar profile-videos-toolbar">
                               <button
+                                type="button"
                                 className={`my-videos-batch-toggle-btn ${batchManageMode ? 'active' : ''}`}
                                 onClick={toggleBatchMode}
                               >
@@ -2530,12 +2840,13 @@ export default function App() {
                               </button>
                               {batchManageMode && (
                                 <>
-                                  <button className="my-videos-batch-toggle-btn" onClick={selectAllVideos}>
+                                  <button type="button" className="my-videos-batch-toggle-btn" onClick={selectAllVideos}>
                                     {selectedVideoIds.size === profileVideos.length && profileVideos.length > 0
                                       ? '取消全选'
                                       : '全选'}
                                   </button>
                                   <button
+                                    type="button"
                                     className="my-videos-batch-delete-btn"
                                     disabled={selectedVideoIds.size === 0}
                                     onClick={executeBatchDelete}
@@ -2552,33 +2863,34 @@ export default function App() {
                                 {profileVideos.map((pv) => (
                                     <div
                                         key={`profile-${profileTab}-${pv.id}`}
-                                        className={`grid-video-card ${batchManageMode ? 'batch-selectable' : ''}`}
-                                        onClick={batchManageMode ? (e) => toggleVideoSelection(pv.id, e) : () => handlePlayProfileVideo(pv)}
+                                        className={`grid-video-card ${isOwnPublishedProfile && batchManageMode ? 'batch-selectable' : ''}`}
+                                        onClick={isOwnPublishedProfile && batchManageMode
+                                          ? (e) => toggleVideoSelection(pv.id, e)
+                                          : () => handlePlayProfileVideo(pv)}
                                     >
                                       <img
                                           className="grid-video-cover"
                                           src={getMediaUrl(pv.cover_url)}
                                           alt={pv.title}
                                       />
-                                      {batchManageMode ? (
+                                      {isOwnPublishedProfile && batchManageMode ? (
                                         <div className={`grid-card-checkbox ${selectedVideoIds.has(pv.id) ? 'checked' : ''}`}>
                                           <svg viewBox="0 0 24 24">
                                             <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
                                           </svg>
                                         </div>
-                                      ) : (
-                                        profileUserId === user?.id && profileTab === 'published' && (
-                                          <button
-                                              className="grid-card-delete-btn"
-                                              onClick={(e) => handleDeleteVideo(pv.id, e)}
-                                              title="删除此视频"
-                                          >
-                                            <svg viewBox="0 0 24 24">
-                                              <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                                            </svg>
-                                          </button>
-                                        )
-                                      )}
+                                      ) : isOwnPublishedProfile ? (
+                                        <button
+                                          type="button"
+                                          className="grid-card-delete-btn"
+                                          onClick={(e) => handleDeleteVideo(pv.id, e)}
+                                          title="删除此视频"
+                                        >
+                                          <svg viewBox="0 0 24 24">
+                                            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                                          </svg>
+                                        </button>
+                                      ) : null}
                                       <div className="grid-video-info">
                                         <svg viewBox="0 0 24 24">
                                           <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
@@ -2742,71 +3054,6 @@ export default function App() {
             </div>
         )}
 
-        {/* My Videos Modal */}
-        {isMyVideosOpen && (
-            <div className="modal-overlay" onClick={() => { setIsMyVideosOpen(false); setBatchManageMode(false); setSelectedVideoIds(new Set()); }}>
-              <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 640 }}>
-                <button className="modal-close-btn" onClick={() => { setIsMyVideosOpen(false); setBatchManageMode(false); setSelectedVideoIds(new Set()); }}>
-                  <svg viewBox="0 0 24 24">
-                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
-                  </svg>
-                </button>
-
-                <h3>我的作品 ({myVideos.length})</h3>
-
-                <div className="my-videos-grid web-modal-grid">
-                  {myVideos.length > 0 ? (
-                      myVideos.map((mv, idx) => (
-                          <div
-                            key={mv.id}
-                            className="grid-video-card"
-                            onClick={() => handlePlayMyVideo(idx)}
-                          >
-                            <img
-                                className="grid-video-cover"
-                                src={getMediaUrl(mv.cover_url)}
-                                alt={mv.title}
-                            />
-                            <button
-                                className="grid-card-delete-btn"
-                                onClick={(e) => handleDeleteVideo(mv.id, e)}
-                                title="删除此视频"
-                            >
-                              <svg viewBox="0 0 24 24">
-                                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                              </svg>
-                            </button>
-                            <div className="grid-video-info">
-                              <svg viewBox="0 0 24 24">
-                                <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                              </svg>
-                              <span>{mv.likeCount ?? mv.likesCount ?? mv.likes_count ?? 0}</span>
-                            </div>
-                          </div>
-                      ))
-                  ) : (
-                      <div className="my-videos-empty">
-                        <svg viewBox="0 0 24 24">
-                          <path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-9 9l-6 4.5-6 4.5z" />
-                        </svg>
-                        <p>您还没有发布任何作品喔</p>
-                      </div>
-                  )}
-                </div>
-
-                <div className="my-videos-pagination">
-                  <button onClick={() => fetchMyVideos()}>刷新</button>
-                  <span>{myVideosPagination.hasMore ? '还有更多作品' : '已加载全部作品'}</span>
-                  <button
-                      disabled={!myVideosPagination.hasMore}
-                      onClick={() => fetchMyVideos(myVideosPagination.nextCursor, true)}
-                  >
-                    加载更多
-                  </button>
-                </div>
-              </div>
-            </div>
-        )}
 
         {/* Like Notifications Modal (F14) */}
         {isLikeNotificationsOpen && (

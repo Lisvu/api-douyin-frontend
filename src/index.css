@@ -2101,13 +2101,241 @@ body {
 
 .web-video-controls {
   position: absolute;
-  left: 20px;
-  right: 20px;
-  bottom: 14px;
+  left: 12px;
+  right: 12px;
+  bottom: 40px;
   z-index: 6;
   display: flex;
   flex-direction: column;
+  gap: 6px;
+}
+
+.danmaku-layer {
+  position: absolute;
+  inset: 0;
+  bottom: 40px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.danmaku-item {
+  position: absolute;
+  right: -20%;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.85), 0 0 6px rgba(0, 0, 0, 0.45);
+  animation-name: danmaku-fly;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes danmaku-fly {
+  from { transform: translateX(0); }
+  to { transform: translateX(calc(-120vw - 100%)); }
+}
+
+.watch-later-overlay-btn {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 7;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.watch-later-overlay-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.watch-later-overlay-btn.active {
+  border-color: var(--primary-cyan);
+  color: var(--primary-cyan);
+}
+
+.web-video-bottom-dock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 8;
+  display: flex;
+  align-items: center;
   gap: 8px;
+  height: 40px;
+  padding: 0 10px 6px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.78));
+  backdrop-filter: blur(6px);
+}
+
+.danmaku-compose-bar {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 4px 0 8px;
+  border-radius: 999px;
+  background: rgba(28, 28, 32, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.danmaku-emoji-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.danmaku-emoji-btn svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+.danmaku-emoji-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.danmaku-emoji-picker {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  width: min(280px, 72vw);
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(24, 24, 28, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.danmaku-emoji-item {
+  width: 100%;
+  aspect-ratio: 1;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.danmaku-emoji-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.danmaku-compose-bar input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: #fff;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 28px;
+}
+
+.danmaku-compose-bar input::placeholder {
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.danmaku-compose-bar input:focus {
+  outline: none;
+}
+
+.danmaku-send-btn {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 12px;
+  margin-right: 2px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.danmaku-send-btn:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.danmaku-send-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.danmaku-toggle-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.35);
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.danmaku-toggle-icon {
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+  color: inherit;
+}
+
+.danmaku-toggle-btn.active {
+  color: #111;
+  background: #fff;
+  border-color: #fff;
+}
+
+.danmaku-toggle-btn.active .danmaku-toggle-icon {
+  color: #111;
+}
+
+.danmaku-toggle-btn:hover {
+  border-color: rgba(255, 255, 255, 0.65);
+  color: #fff;
+}
+
+.danmaku-toggle-btn.active:hover {
+  background: rgba(255, 255, 255, 0.92);
+  color: #111;
 }
 
 .web-video-progress-track {
@@ -2180,16 +2408,16 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 5;
+  z-index: 9;
   transition: background 0.2s;
 }
 
 .web-mute-button {
-  right: 16px;
+  left: 16px;
 }
 
 .web-zoom-button {
-  right: 64px;
+  left: 64px;
 }
 
 .web-mute-button:hover,
@@ -2210,7 +2438,7 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 60px 20px 62px;
+  padding: 48px 16px 84px;
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
   color: #fff;
   pointer-events: none;
@@ -2262,6 +2490,14 @@ body {
   z-index: 10;
 }
 
+/* 横版：叠在视频右缘内侧，避免宽屏时被挤出视口 */
+.web-video-stage.is-zoomed .web-action-bar {
+  right: max(16px, calc(50% - min(min(46vw, 700px), calc((100vh - 112px) * 8 / 9)) + 20px));
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
+}
+
 @media (max-width: 899px) {
   .web-video-wrapper.is-zoomed {
     width: 100vw;
@@ -2269,12 +2505,15 @@ body {
     max-height: calc(100vh - 72px);
   }
 
-  .web-zoom-button {
-    right: 64px;
-  }
-
   .web-action-bar {
     right: 16px;
+  }
+
+  .web-video-stage.is-zoomed .web-action-bar {
+    right: 16px;
+    top: 50%;
+    bottom: auto;
+    transform: translateY(-50%);
   }
 }
 
@@ -2288,6 +2527,10 @@ body {
   flex-direction: column;
   gap: 12px;
   z-index: 10;
+}
+
+.web-video-stage.is-zoomed .web-nav-arrows {
+  display: none;
 }
 
 .web-nav-arrows .arrow-nav-btn {
@@ -2502,6 +2745,7 @@ body {
 }
 
 .sidebar-nav-item {
+  position: relative;
   display: flex; flex-direction: column; align-items: center; gap: 5px;
   width: 80px; padding: 10px 6px; border: none; background: transparent;
   color: rgba(255,255,255,0.55); font-size: 12px; font-weight: 500;
@@ -2511,6 +2755,39 @@ body {
 .sidebar-nav-item:hover { background: rgba(255,255,255,0.06); color: #fff; }
 .sidebar-nav-item.active { color: #fff; background: rgba(255,255,255,0.08); font-weight: 700; }
 .sidebar-nav-item.active svg { fill: var(--primary-cyan); }
+
+.sidebar-nav-badge {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--primary-pink);
+  color: #fff;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.watch-later-main .watch-later-header {
+  padding: 20px 24px 8px;
+}
+
+.watch-later-main .watch-later-header h2 {
+  margin: 0 0 6px;
+  font-size: 22px;
+  color: #fff;
+}
+
+.watch-later-main .watch-later-header p {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.55);
+}
 
 /* 关注按钮三状态 */
 .follow-badge-btn {
@@ -2889,6 +3166,10 @@ body {
 
 .profile-videos-section {
   min-height: 200px;
+}
+
+.profile-videos-toolbar {
+  margin-bottom: 16px;
 }
 
 .profile-video-grid {
