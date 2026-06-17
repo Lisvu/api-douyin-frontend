@@ -447,10 +447,6 @@ export default function App() {
       if (v.id !== videoId) return v;
       return normalizeFeedVideo({ ...v, liked, likeCount });
     }));
-    setMyVideos(prev => prev.map(v => {
-      if (v.id !== videoId) return v;
-      return normalizeFeedVideo({ ...v, liked, likeCount });
-    }));
     setProfileVideos(prev => prev.map(v => {
       if (v.id !== videoId) return v;
       return normalizeFeedVideo({ ...v, liked, likeCount });
@@ -462,7 +458,6 @@ export default function App() {
         ? normalizeFeedVideo({ ...v, favorited, favoriteCount })
         : v;
     setVideos(prev => prev.map(patch));
-    setMyVideos(prev => prev.map(patch));
     setProfileVideos(prev => prev.map(patch));
   };
 
@@ -471,7 +466,6 @@ export default function App() {
         ? { ...v, comments_count: commentCount, commentCount }
         : v;
     setVideos(prev => prev.map(patch));
-    setMyVideos(prev => prev.map(patch));
     setProfileVideos(prev => prev.map(patch));
   };
 
