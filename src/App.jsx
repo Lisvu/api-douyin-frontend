@@ -222,7 +222,6 @@ export default function App() {
   const preloadedMediaRef = useRef([]);
   const shownDanmakuIdsRef = useRef(new Set());
   const lastTimeRef = useRef(0);
-  const lastDirectionRef = useRef('down');
 
   const DANMAKU_COLORS = ['#ffffff', '#ffeb3b', '#ff5252', '#69f0ae', '#40c4ff', '#ff80ab', '#b388ff'];
   const DANMAKU_EMOJIS = ['😀', '😂', '😍', '👍', '❤️', '🔥', '🎉', '💯', '😭', '🤣', '✨', '🥰', '😎', '🤔', '👏', '🙏'];
@@ -557,7 +556,7 @@ export default function App() {
       showToast('请填写完整用户名和密码！', true);
       return;
     }
-    const endpoint = authMode === 'register' ? `${API_PREFIX}/auth/register` : `${API_PREFIX}/auth/login`;
+    const endpoint = authMode === 'register' ? `${API_PREFIX}/registrations` : `${API_PREFIX}/sessions`;
     const data = await apiFetch(endpoint, {
       method: 'POST',
       body: JSON.stringify({ username, password })
@@ -597,7 +596,7 @@ export default function App() {
       setIsLoadingFeed(true);
     }
     const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
-    const data = await apiFetch(`${API_PREFIX}/videos/recommendations?limit=10${cursorParam}`);
+    const data = await apiFetch(`${API_PREFIX}/video-recommendations?limit=10${cursorParam}`);
     if (append) {
       loadingMoreFeedRef.current = false;
       setIsLoadingMoreFeed(false);
@@ -630,15 +629,15 @@ export default function App() {
     let data;
     if (categoryId === 'all') {
       const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
-      data = await apiFetch(`${API_PREFIX}/videos/featured?limit=24${cursorParam}`);
+      data = await apiFetch(`${API_PREFIX}/featured-videos?limit=24${cursorParam}`);
       if ((!data || !data.success) && !append) {
-        const fallback = await apiFetch(`${API_PREFIX}/videos/recommendations?limit=24`);
+        const fallback = await apiFetch(`${API_PREFIX}/video-recommendations?limit=24`);
         if (fallback && fallback.success) {
           data = fallback;
         }
       }
     } else {
-      data = await apiFetch(`${API_PREFIX}/videos/search?q=${encodeURIComponent(category.keyword || category.label)}`);
+      data = await apiFetch(`${API_PREFIX}/videos?q=${encodeURIComponent(category.keyword || category.label)}`);
     }
     setIsLoadingFeatured(false);
     if (data && data.success) {
@@ -713,7 +712,7 @@ export default function App() {
       return;
     }
     setLikingVideoId(videoId);
-    const data = await apiFetch(`${API_PREFIX}/videos/${videoId}/like`, { method: 'PUT' });
+    const data = await apiFetch(`${API_PREFIX}/videos/${videoId}/likes/me`, { method: 'PUT' });
     setLikingVideoId(null);
     if (!data) return;
     if (data.success) {
@@ -736,7 +735,7 @@ export default function App() {
       return;
     }
     setFavoritingVideoId(videoId);
-    const data = await apiFetch(`${API_PREFIX}/videos/${videoId}/favorite`, { method: 'PUT' });
+    const data = await apiFetch(`${API_PREFIX}/videos/${videoId}/favorites/me`, { method: 'PUT' });
     setFavoritingVideoId(null);
     if (!data) return;
     if (data.success) {
@@ -816,7 +815,7 @@ export default function App() {
     const isExternalUrl = sourceUrl.startsWith('http://') || sourceUrl.startsWith('https://');
 
     const fetchFromApi = async (signal) => {
-      const response = await fetch(`${API_BASE}${API_PREFIX}/videos/${video.id}/download`, {
+      const response = await fetch(`${API_BASE}${API_PREFIX}/videos/${video.id}/file`, {
         headers: { Authorization: `Bearer ${token}` },
         signal,
       });
@@ -921,7 +920,7 @@ export default function App() {
   };
 
   const fetchWatchLaterStatus = async (videoId) => {
-    const data = await apiFetch(`${API_PREFIX}/videos/${videoId}/watch-later`, { silent: true });
+    const data = await apiFetch(`${API_PREFIX}/videos/${videoId}/watch-later-items/me`, { silent: true });
     if (data && data.success) {
       setInWatchLater(!!data.inWatchLater);
       setWatchLaterCount(data.watchLaterCount ?? 0);
@@ -932,7 +931,7 @@ export default function App() {
     if (!token) return;
     setIsLoadingWatchLater(true);
     const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
-    const data = await apiFetch(`${API_PREFIX}/users/me/watch-later?limit=24${cursorParam}`);
+    const data = await apiFetch(`${API_PREFIX}/users/me/watch-later-items/videos?limit=24${cursorParam}`);
     setIsLoadingWatchLater(false);
     if (data && data.success) {
       const fetchedVideos = (data.videos || []).map(normalizeFeedVideo);
@@ -953,7 +952,7 @@ export default function App() {
       showToast('请先登录', true);
       return;
     }
-    const endpoint = `${API_PREFIX}/videos/${videoId}/watch-later`;
+    const endpoint = `${API_PREFIX}/videos/${videoId}/watch-later-items/me`;
     const data = inWatchLater
         ? await apiFetch(endpoint, { method: 'DELETE' })
         : await apiFetch(endpoint, { method: 'POST' });
@@ -1144,7 +1143,7 @@ export default function App() {
 
   const fetchLikedVideos = async (cursor = null, append = false) => {
     const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
-    const data = await apiFetch(`${API_PREFIX}/users/me/liked-videos?limit=8${cursorParam}`);
+    const data = await apiFetch(`${API_PREFIX}/users/me/likes/videos?limit=8${cursorParam}`);
     if (data && data.success) {
       const fetchedVideos = (data.videos || []).map(normalizeFeedVideo);
       setLikedVideos(prev => append ? [...prev, ...fetchedVideos] : fetchedVideos);
@@ -1161,7 +1160,7 @@ export default function App() {
       return;
     }
     setIsSearchingUsers(true);
-    const data = await apiFetch(`${API_PREFIX}/users/search?q=${encodeURIComponent(query.trim())}`);
+    const data = await apiFetch(`${API_PREFIX}/users?q=${encodeURIComponent(query.trim())}`);
     setIsSearchingUsers(false);
     if (data && data.success) {
       setUserSearchResults(data.users || []);
@@ -1170,7 +1169,7 @@ export default function App() {
 
   const shareVideoToUser = async (toUserId) => {
     setIsSharing(true);
-    const data = await apiFetch(`${API_PREFIX}/videos/${shareTargetVideoId}/share`, {
+    const data = await apiFetch(`${API_PREFIX}/videos/${shareTargetVideoId}/shares`, {
       method: 'POST',
       body: JSON.stringify({ toUserId }),
       headers: { 'Content-Type': 'application/json' }
@@ -1191,7 +1190,7 @@ export default function App() {
 
   const fetchSharedVideos = async (cursor = null, append = false) => {
     const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
-    const data = await apiFetch(`${API_PREFIX}/users/me/shared-videos?limit=8${cursorParam}`);
+    const data = await apiFetch(`${API_PREFIX}/users/me/shares/videos?limit=8${cursorParam}`);
     if (data && data.success) {
       const fetchedVideos = (data.videos || []).map(normalizeFeedVideo);
       setSharedVideos(prev => append ? [...prev, ...fetchedVideos] : fetchedVideos);
@@ -1223,7 +1222,7 @@ export default function App() {
   };
 
   const markLikeNotificationsRead = async () => {
-    const data = await apiFetch(`${API_PREFIX}/users/me/like-notifications/read`, { method: 'PUT' });
+    const data = await apiFetch(`${API_PREFIX}/users/me/like-notifications/read-receipts`, { method: 'PUT' });
     if (data && data.success) {
       setLikeNotificationUnreadCount(0);
       setLikeNotifications(prev => prev.map(item => ({ ...item, read: true })));
@@ -1337,9 +1336,7 @@ export default function App() {
   };
 
   const openUserProfile = async (userId) => {
-    if (userId !== user?.id) {
-      fetchRelation(userId);
-    }
+    if (!userId) return;
     resetBatchManage();
     setProfileUserId(userId);
     setProfileTab('published');
@@ -1380,7 +1377,7 @@ export default function App() {
     if (data && data.success) {
       let nextProfileUser = data.user;
       if (userId === user?.id) {
-        const relationData = await apiFetch(`${API_PREFIX}/users/${userId}/relation`, { silent: true });
+        const relationData = await apiFetch(`${API_PREFIX}/users/me/relationships/${userId}`, { silent: true });
         if (relationData && relationData.success) {
           nextProfileUser = {
             ...nextProfileUser,
@@ -1405,7 +1402,7 @@ export default function App() {
     setProfileRelationUsers([]);
     setIsLoadingProfileRelations(true);
     if (type === 'friends') {
-      const data = await apiFetch(`${API_PREFIX}/users/me/friends`);
+      const data = await apiFetch(`${API_PREFIX}/users/me/relationships/friends`);
       setIsLoadingProfileRelations(false);
       if (data && data.success) {
         setProfileRelationUsers(data.friends || []);
@@ -1419,7 +1416,7 @@ export default function App() {
       return;
     }
     const endpoint = type === 'following' ? 'following' : 'followers';
-    const data = await apiFetch(`${API_PREFIX}/users/me/${endpoint}`);
+    const data = await apiFetch(`${API_PREFIX}/users/me/relationships/${endpoint}`);
     setIsLoadingProfileRelations(false);
     if (data && data.success) {
       setProfileRelationUsers(data.users || []);
@@ -1477,9 +1474,9 @@ export default function App() {
     if (!targetId) return;
     let endpoint = `${API_PREFIX}/users/${targetId}/videos`;
     if (tab === 'liked') {
-      endpoint = `${API_PREFIX}/users/${targetId}/liked-videos`;
+      endpoint = `${API_PREFIX}/users/${targetId}/likes/videos`;
     } else if (tab === 'favorited') {
-      endpoint = `${API_PREFIX}/users/${targetId}/favorited-videos`;
+      endpoint = `${API_PREFIX}/users/${targetId}/favorites/videos`;
     }
     const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
     const data = await apiFetch(`${endpoint}?limit=8${cursorParam}`);
@@ -1538,7 +1535,7 @@ export default function App() {
   };
 
   const fetchRelation = async (targetUserId) => {
-    const data = await apiFetch(`${API_PREFIX}/users/${targetUserId}/relation`, { silent: true });
+    const data = await apiFetch(`${API_PREFIX}/users/me/relationships/${targetUserId}`, { silent: true });
     if (data && data.success) {
       setFollowMap(prev => ({ ...prev, [targetUserId]: { isFollowing: data.isFollowing, isFriend: data.isFriend } }));
     }
@@ -1549,7 +1546,7 @@ export default function App() {
     if (!token) { showToast('请先登录', true); return; }
     if (targetUserId === user?.id) return;
     const isFollowing = followMap[targetUserId]?.isFollowing;
-    const data = await apiFetch(`${API_PREFIX}/users/${targetUserId}/follow`, { method: isFollowing ? 'DELETE' : 'POST' });
+    const data = await apiFetch(`${API_PREFIX}/users/me/relationships/${targetUserId}`, { method: isFollowing ? 'DELETE' : 'POST' });
     if (data && data.success) {
       showToast(data.message);
       setFollowMap(prev => ({ ...prev, [targetUserId]: { isFollowing: !isFollowing, isFriend: data.isFriend ?? false } }));
@@ -1572,7 +1569,7 @@ export default function App() {
     if (!q.trim()) { setSearchResults(null); return; }
     searchTimerRef.current = setTimeout(async () => {
       setIsSearching(true);
-      const data = await apiFetch(`${API_PREFIX}/videos/search?q=${encodeURIComponent(q.trim())}`);
+      const data = await apiFetch(`${API_PREFIX}/videos?q=${encodeURIComponent(q.trim())}`);
       setIsSearching(false);
       if (data && data.success) setSearchResults(data);
     }, 400);
@@ -1581,13 +1578,11 @@ export default function App() {
   const clearSearch = () => { setSearchQuery(''); setSearchResults(null); };
 
   const playSearchVideo = (video) => {
-    const allVideos = searchPageResults?.videos || [];
-    const startIndex = allVideos.findIndex(v => v.id === video.id);
     exitSearchPage();
-    startSingleVideoPlayback(video, {
-      queue: allVideos,
-      startIndex: startIndex >= 0 ? startIndex : 0,
-    });
+    setSearchResults(null);
+    setSearchQuery('');
+    clearSearch();
+    startSingleVideoPlayback(video);
   };
 
   const openFriendChat = async (friend) => {
@@ -1636,7 +1631,7 @@ export default function App() {
 
   const fetchFriends = async () => {
     setIsLoadingFriends(true);
-    const data = await apiFetch(`${API_PREFIX}/users/me/friends`);
+    const data = await apiFetch(`${API_PREFIX}/users/me/relationships/friends`);
     setIsLoadingFriends(false);
     if (data && data.success) {
       const friendsList = data.friends || [];
@@ -1652,7 +1647,7 @@ export default function App() {
 
   const fetchFollowing = async () => {
     setIsLoadingFollowing(true);
-    const data = await apiFetch(`${API_PREFIX}/users/me/following`);
+    const data = await apiFetch(`${API_PREFIX}/users/me/relationships/following`);
     setIsLoadingFollowing(false);
     if (data && data.success) {
       const users = data.users || [];
@@ -1685,6 +1680,13 @@ export default function App() {
     setIsLoadingFeed(true);
 
     const data = await apiFetch(`${API_PREFIX}/users/${targetUser.id}/videos`);
+
+    // 调试日志
+    console.log('=== fetchUserVideos 调试 ===');
+    console.log('targetUser:', targetUser);
+    console.log('响应数据:', data);
+    console.log('data.success:', data?.success);
+    console.log('data.videos:', data?.videos);
 
     setIsLoadingFeed(false);
 
@@ -1847,7 +1849,7 @@ export default function App() {
         formData.append('frame', frameFile);
       }
 
-      const data = await apiFetch(`${API_PREFIX}/ai/video-copy`, {
+      const data = await apiFetch(`${API_PREFIX}/ai/video-copies`, {
         method: 'POST',
         body: formData,
         timeoutMs: 180000,
@@ -1926,7 +1928,7 @@ export default function App() {
       return;
     }
     const ids = Array.from(selectedVideoIds);
-    const data = await apiFetch(`${API_PREFIX}/videos/batch-delete`, {
+    const data = await apiFetch(`${API_PREFIX}/video-deletion-jobs`, {
       method: 'POST',
       body: JSON.stringify({ videoIds: ids })
     });
@@ -1950,16 +1952,11 @@ export default function App() {
   };
 
   const handleVideoPlaybackError = (e) => {
+    const mediaError = e?.currentTarget?.error;
     const failedUrl = videos[currentIndex]?.video_url;
-    const goingUp = lastDirectionRef.current === 'up';
+    console.error('Video playback failed:', mediaError, failedUrl);
 
-    if (goingUp && currentIndex > 0) {
-      showToast('该视频文件在本机不存在或已损坏，已自动跳过', true);
-      setCurrentIndex(prev => prev - 1);
-      return;
-    }
-
-    if (!goingUp && currentIndex < videos.length - 1) {
+    if (currentIndex < videos.length - 1) {
       showToast('该视频文件在本机不存在或已损坏，已自动跳过', true);
       setCurrentIndex(prev => prev + 1);
       return;
@@ -1972,6 +1969,7 @@ export default function App() {
         true
     );
   };
+
   const togglePlayState = () => {
     if (!videoRef.current) return;
     if (isPlaying) {
@@ -2077,7 +2075,6 @@ export default function App() {
   }, [currentView, currentIndex, videos]);
 
   const handleNextVideo = async () => {
-    lastDirectionRef.current = 'down';
     if (currentIndex < videos.length - 1) {
       setCurrentIndex(prev => prev + 1);
     } else {
@@ -2091,7 +2088,6 @@ export default function App() {
   };
 
   const handlePrevVideo = () => {
-    lastDirectionRef.current = 'up';
     if (currentIndex > 0) {
       setCurrentIndex(prev => prev - 1);
     }
@@ -2233,7 +2229,7 @@ export default function App() {
     setSearchResults(null);
     setIsSearchPageLoading(true);
     setSearchQuery(q);
-    const data = await apiFetch(`${API_PREFIX}/videos/search?q=${encodeURIComponent(q.trim())}`);
+    const data = await apiFetch(`${API_PREFIX}/videos?q=${encodeURIComponent(q.trim())}`);
     setIsSearchPageLoading(false);
     if (data && data.success) setSearchPageResults(data);
   };
@@ -2410,7 +2406,7 @@ export default function App() {
                           <div className="search-page-section-title">视频</div>
                           <div className="search-page-videos">
                             {searchPageResults.videos.map(v => (
-                                <div key={v.id} className="search-video-card" onClick={() => playSearchVideo(v)}>
+                                <div key={v.id} className="search-video-card" onClick={() => { exitSearchPage(); startSingleVideoPlayback(v); }}>
                                   <div className="search-video-thumb-wrap">
                                     <img src={getMediaUrl(v.cover_url)} alt={v.title} className="search-video-thumb-img" />
                                     <div className="search-video-likes">
@@ -2525,32 +2521,9 @@ export default function App() {
                                           key={`featured-${fv.id}`}
                                           className="featured-video-card"
                                           onClick={() => handlePlayFeaturedVideo(fv, idx)}
-                                          onMouseEnter={(e) => {
-                                            const video = e.currentTarget.querySelector('video');
-                                            if (video) video.play();
-                                          }}
-                                          onMouseLeave={(e) => {
-                                            const video = e.currentTarget.querySelector('video');
-                                            if (video) { video.pause(); video.currentTime = 0; }
-                                          }}
                                       >
-                                        <div className="featured-video-thumb" style={{ position: 'relative' }}>
+                                        <div className="featured-video-thumb">
                                           <img src={getMediaUrl(fv.cover_url)} alt={fv.title} loading="lazy" />
-                                          <video
-                                              src={getMediaUrl(fv.video_url)}
-                                              muted
-                                              loop
-                                              playsInline
-                                              preload="none"
-                                              style={{
-                                                position: 'absolute', inset: 0,
-                                                width: '100%', height: '100%',
-                                                objectFit: 'cover', opacity: 0,
-                                                transition: 'opacity 0.3s'
-                                              }}
-                                              onCanPlay={(e) => { e.currentTarget.style.opacity = '1'; }}
-                                              onPause={(e) => { e.currentTarget.style.opacity = '0'; }}
-                                          />
                                           <div className="featured-video-likes">
                                             <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
                                             <span>{formatLikeCount(fv.likeCount ?? fv.likes_count ?? 0)}</span>
@@ -3235,16 +3208,6 @@ export default function App() {
                                   </>
                               )}
                             </div>
-                            {profileUserId !== user?.id && (
-                                <button
-                                    className={`profile-follow-btn ${followMap[profileUserId]?.isFollowing ? (followMap[profileUserId]?.isFriend ? 'is-friend' : 'is-following') : ''}`}
-                                    onClick={(e) => handleFollowToggle(profileUserId, e)}
-                                >
-                                  {followMap[profileUserId]?.isFollowing
-                                      ? (followMap[profileUserId]?.isFriend ? '♥ 好友' : '✓ 已关注')
-                                      : '+ 关注'}
-                                </button>
-                            )}
                           </div>
                         </div>
 
