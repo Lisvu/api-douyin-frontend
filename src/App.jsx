@@ -222,6 +222,7 @@ export default function App() {
   const preloadedMediaRef = useRef([]);
   const shownDanmakuIdsRef = useRef(new Set());
   const lastTimeRef = useRef(0);
+  const lastDirectionRef = useRef('down');
 
   const DANMAKU_COLORS = ['#ffffff', '#ffeb3b', '#ff5252', '#69f0ae', '#40c4ff', '#ff80ab', '#b388ff'];
   const DANMAKU_EMOJIS = ['😀', '😂', '😍', '👍', '❤️', '🔥', '🎉', '💯', '😭', '🤣', '✨', '🥰', '😎', '🤔', '👏', '🙏'];
@@ -1336,7 +1337,9 @@ export default function App() {
   };
 
   const openUserProfile = async (userId) => {
-    if (!userId) return;
+    if (userId !== user?.id) {
+      fetchRelation(userId);
+    }
     resetBatchManage();
     setProfileUserId(userId);
     setProfileTab('published');
@@ -1578,11 +1581,13 @@ export default function App() {
   const clearSearch = () => { setSearchQuery(''); setSearchResults(null); };
 
   const playSearchVideo = (video) => {
+    const allVideos = searchPageResults?.videos || [];
+    const startIndex = allVideos.findIndex(v => v.id === video.id);
     exitSearchPage();
-    setSearchResults(null);
-    setSearchQuery('');
-    clearSearch();
-    startSingleVideoPlayback(video);
+    startSingleVideoPlayback(video, {
+      queue: allVideos,
+      startIndex: startIndex >= 0 ? startIndex : 0,
+    });
   };
 
   const openFriendChat = async (friend) => {
@@ -1680,13 +1685,6 @@ export default function App() {
     setIsLoadingFeed(true);
 
     const data = await apiFetch(`${API_PREFIX}/users/${targetUser.id}/videos`);
-
-    // 调试日志
-    console.log('=== fetchUserVideos 调试 ===');
-    console.log('targetUser:', targetUser);
-    console.log('响应数据:', data);
-    console.log('data.success:', data?.success);
-    console.log('data.videos:', data?.videos);
 
     setIsLoadingFeed(false);
 
@@ -1952,11 +1950,16 @@ export default function App() {
   };
 
   const handleVideoPlaybackError = (e) => {
-    const mediaError = e?.currentTarget?.error;
     const failedUrl = videos[currentIndex]?.video_url;
-    console.error('Video playback failed:', mediaError, failedUrl);
+    const goingUp = lastDirectionRef.current === 'up';
 
-    if (currentIndex < videos.length - 1) {
+    if (goingUp && currentIndex > 0) {
+      showToast('该视频文件在本机不存在或已损坏，已自动跳过', true);
+      setCurrentIndex(prev => prev - 1);
+      return;
+    }
+
+    if (!goingUp && currentIndex < videos.length - 1) {
       showToast('该视频文件在本机不存在或已损坏，已自动跳过', true);
       setCurrentIndex(prev => prev + 1);
       return;
@@ -1969,7 +1972,6 @@ export default function App() {
         true
     );
   };
-
   const togglePlayState = () => {
     if (!videoRef.current) return;
     if (isPlaying) {
@@ -2075,6 +2077,7 @@ export default function App() {
   }, [currentView, currentIndex, videos]);
 
   const handleNextVideo = async () => {
+    lastDirectionRef.current = 'down';
     if (currentIndex < videos.length - 1) {
       setCurrentIndex(prev => prev + 1);
     } else {
@@ -2088,6 +2091,7 @@ export default function App() {
   };
 
   const handlePrevVideo = () => {
+    lastDirectionRef.current = 'up';
     if (currentIndex > 0) {
       setCurrentIndex(prev => prev - 1);
     }
@@ -2406,7 +2410,7 @@ export default function App() {
                           <div className="search-page-section-title">视频</div>
                           <div className="search-page-videos">
                             {searchPageResults.videos.map(v => (
-                                <div key={v.id} className="search-video-card" onClick={() => { exitSearchPage(); startSingleVideoPlayback(v); }}>
+                                <div key={v.id} className="search-video-card" onClick={() => playSearchVideo(v)}>
                                   <div className="search-video-thumb-wrap">
                                     <img src={getMediaUrl(v.cover_url)} alt={v.title} className="search-video-thumb-img" />
                                     <div className="search-video-likes">
@@ -2521,9 +2525,32 @@ export default function App() {
                                           key={`featured-${fv.id}`}
                                           className="featured-video-card"
                                           onClick={() => handlePlayFeaturedVideo(fv, idx)}
+                                          onMouseEnter={(e) => {
+                                            const video = e.currentTarget.querySelector('video');
+                                            if (video) video.play();
+                                          }}
+                                          onMouseLeave={(e) => {
+                                            const video = e.currentTarget.querySelector('video');
+                                            if (video) { video.pause(); video.currentTime = 0; }
+                                          }}
                                       >
-                                        <div className="featured-video-thumb">
+                                        <div className="featured-video-thumb" style={{ position: 'relative' }}>
                                           <img src={getMediaUrl(fv.cover_url)} alt={fv.title} loading="lazy" />
+                                          <video
+                                              src={getMediaUrl(fv.video_url)}
+                                              muted
+                                              loop
+                                              playsInline
+                                              preload="none"
+                                              style={{
+                                                position: 'absolute', inset: 0,
+                                                width: '100%', height: '100%',
+                                                objectFit: 'cover', opacity: 0,
+                                                transition: 'opacity 0.3s'
+                                              }}
+                                              onCanPlay={(e) => { e.currentTarget.style.opacity = '1'; }}
+                                              onPause={(e) => { e.currentTarget.style.opacity = '0'; }}
+                                          />
                                           <div className="featured-video-likes">
                                             <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
                                             <span>{formatLikeCount(fv.likeCount ?? fv.likes_count ?? 0)}</span>
@@ -3208,6 +3235,16 @@ export default function App() {
                                   </>
                               )}
                             </div>
+                            {profileUserId !== user?.id && (
+                                <button
+                                    className={`profile-follow-btn ${followMap[profileUserId]?.isFollowing ? (followMap[profileUserId]?.isFriend ? 'is-friend' : 'is-following') : ''}`}
+                                    onClick={(e) => handleFollowToggle(profileUserId, e)}
+                                >
+                                  {followMap[profileUserId]?.isFollowing
+                                      ? (followMap[profileUserId]?.isFriend ? '♥ 好友' : '✓ 已关注')
+                                      : '+ 关注'}
+                                </button>
+                            )}
                           </div>
                         </div>
 

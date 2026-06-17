@@ -3829,3 +3829,36 @@ body {
     padding: 14px 14px 24px;
   }
 }
+
+.profile-follow-btn {
+  margin-top: 14px;
+  padding: 8px 32px;
+  border-radius: 999px;
+  border: none;
+  background: var(--primary-cyan);
+  color: #000;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.profile-follow-btn:hover {
+  opacity: 0.85;
+}
+
+.profile-follow-btn.is-following {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.profile-follow-btn.is-friend {
+  background: rgba(255, 64, 129, 0.2);
+  color: var(--primary-pink);
+  border: 1px solid var(--primary-pink);
+}
+
+.featured-video-thumb {
+  position: relative;
+}
