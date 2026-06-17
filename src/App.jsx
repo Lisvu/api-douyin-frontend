@@ -1879,7 +1879,6 @@ export default function App() {
     const data = await apiFetch(`${API_PREFIX}/videos/${videoId}`, { method: 'DELETE' });
     if (data && data.success) {
       showToast('视频已成功下架！');
-      fetchMyVideos();
       if (isOwnPublishedProfile) {
         await refreshOwnPublishedProfile();
       }
@@ -1934,7 +1933,6 @@ export default function App() {
     if (data && data.success) {
       showToast(`成功删除 ${ids.length} 个视频`);
       resetBatchManage();
-      fetchMyVideos();
       if (isOwnPublishedProfile) {
         await refreshOwnPublishedProfile();
       }
