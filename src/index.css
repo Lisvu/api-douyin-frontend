@@ -3238,7 +3238,8 @@ body {
 
 .profile-stats {
   display: flex;
-  gap: 24px;
+  flex-wrap: wrap;
+  gap: 16px 24px;
 }
 
 .profile-stat-item {

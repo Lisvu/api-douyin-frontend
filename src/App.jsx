@@ -1381,6 +1381,7 @@ export default function App() {
             ...nextProfileUser,
             followingCount: relationData.followingCount ?? nextProfileUser.followingCount,
             followerCount: relationData.followerCount ?? nextProfileUser.followerCount,
+            friendCount: relationData.friendCount ?? nextProfileUser.friendCount,
           };
         }
       }
@@ -1392,12 +1393,26 @@ export default function App() {
 
   const openProfileRelationModal = async (type) => {
     if (profileUserId !== user?.id) {
-      showToast('当前只能查看自己的关注和粉丝', true);
+      showToast('当前只能查看自己的关注、粉丝和朋友', true);
       return;
     }
     setProfileRelationModal(type);
     setProfileRelationUsers([]);
     setIsLoadingProfileRelations(true);
+    if (type === 'friends') {
+      const data = await apiFetch(`${API_PREFIX}/users/me/friends`);
+      setIsLoadingProfileRelations(false);
+      if (data && data.success) {
+        setProfileRelationUsers(data.friends || []);
+        setProfileUser(prev => prev ? {
+          ...prev,
+          friendCount: data.count ?? (data.friends || []).length,
+        } : prev);
+      } else if (data) {
+        showToast(data.message || '无法加载朋友列表', true);
+      }
+      return;
+    }
     const endpoint = type === 'following' ? 'following' : 'followers';
     const data = await apiFetch(`${API_PREFIX}/users/me/${endpoint}`);
     setIsLoadingProfileRelations(false);
@@ -1535,6 +1550,13 @@ export default function App() {
       setFollowMap(prev => ({ ...prev, [targetUserId]: { isFollowing: !isFollowing, isFriend: data.isFriend ?? false } }));
       if (navTab === 'friends') fetchFriends();
       if (navTab === 'following') fetchFollowing();
+      if (currentView === 'profile' && profileUserId === user?.id) {
+        setProfileUser(prev => prev ? {
+          ...prev,
+          followingCount: data.followingCount ?? prev.followingCount,
+          friendCount: data.friendCount ?? prev.friendCount,
+        } : prev);
+      }
     } else if (data) showToast(data.message, true);
   };
 
@@ -3145,24 +3167,46 @@ export default function App() {
                               <span className="profile-stat-item">
                                 <strong>{profileUser.publishedVideoCount ?? 0}</strong> 作品
                               </span>
-                              <button
-                                  type="button"
-                                  className="profile-stat-item profile-stat-button"
-                                  onClick={() => openProfileRelationModal('following')}
-                                  disabled={profileUserId !== user?.id}
-                                  title={profileUserId === user?.id ? '查看我关注的人' : '只能查看自己的关注列表'}
-                              >
-                                <strong>{profileUser.followingCount ?? 0}</strong> 关注
-                              </button>
-                              <button
-                                  type="button"
-                                  className="profile-stat-item profile-stat-button"
-                                  onClick={() => openProfileRelationModal('followers')}
-                                  disabled={profileUserId !== user?.id}
-                                  title={profileUserId === user?.id ? '查看我的粉丝' : '只能查看自己的粉丝列表'}
-                              >
-                                <strong>{profileUser.followerCount ?? 0}</strong> 粉丝
-                              </button>
+                              {profileUserId === user?.id ? (
+                                  <>
+                                    <button
+                                        type="button"
+                                        className="profile-stat-item profile-stat-button"
+                                        onClick={() => openProfileRelationModal('following')}
+                                        title="查看我关注的人"
+                                    >
+                                      <strong>{profileUser.followingCount ?? 0}</strong> 关注
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="profile-stat-item profile-stat-button"
+                                        onClick={() => openProfileRelationModal('followers')}
+                                        title="查看我的粉丝"
+                                    >
+                                      <strong>{profileUser.followerCount ?? 0}</strong> 粉丝
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="profile-stat-item profile-stat-button"
+                                        onClick={() => openProfileRelationModal('friends')}
+                                        title="查看我的朋友"
+                                    >
+                                      <strong>{profileUser.friendCount ?? 0}</strong> 朋友
+                                    </button>
+                                  </>
+                              ) : (
+                                  <>
+                                    <span className="profile-stat-item">
+                                      <strong>{profileUser.followingCount ?? 0}</strong> 关注
+                                    </span>
+                                    <span className="profile-stat-item">
+                                      <strong>{profileUser.followerCount ?? 0}</strong> 粉丝
+                                    </span>
+                                    <span className="profile-stat-item">
+                                      <strong>{profileUser.friendCount ?? 0}</strong> 朋友
+                                    </span>
+                                  </>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -3704,7 +3748,13 @@ export default function App() {
                   </svg>
                 </button>
 
-                <h3>{profileRelationModal === 'following' ? '我关注的人' : '我的粉丝'} ({profileRelationUsers.length})</h3>
+                <h3>{
+                  profileRelationModal === 'following'
+                      ? '我关注的人'
+                      : profileRelationModal === 'followers'
+                          ? '我的粉丝'
+                          : '我的朋友'
+                } ({profileRelationUsers.length})</h3>
 
                 <div className="profile-relations-list">
                   {isLoadingProfileRelations ? (
@@ -3730,7 +3780,11 @@ export default function App() {
                       ))
                   ) : (
                       <div className="profile-relations-empty">
-                        {profileRelationModal === 'following' ? '还没有关注任何人' : '还没有粉丝'}
+                        {profileRelationModal === 'following'
+                            ? '还没有关注任何人'
+                            : profileRelationModal === 'followers'
+                                ? '还没有粉丝'
+                                : '还没有互关好友'}
                       </div>
                   )}
                 </div>
