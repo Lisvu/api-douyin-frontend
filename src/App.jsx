@@ -1297,25 +1297,33 @@ export default function App() {
 
     if (data && data.success) {
       const newCount = data.commentsCount ?? commentsTotalCount + 1;
+      console.log('[handlePostComment] success, data.comment:', data.comment, 'data.commentsCount:', data.commentsCount);
       setCommentDraft('');
       setCommentsTotalCount(newCount);
       updateVideoCommentCount(targetVideoId, newCount);
       setCommentsPagination({ nextCursor: null, hasMore: false });
       if (data.comment) {
-        setComments(prev => [
-          { ...data.comment, justPosted: true },
-          ...prev.filter(item => item.id !== data.comment.id)
-        ]);
+        setComments(prev => {
+          const next = [
+            { ...data.comment, justPosted: true },
+            ...prev.filter(item => item.id !== data.comment.id)
+          ];
+          console.log('[handlePostComment] setComments, prev length:', prev.length, 'next length:', next.length);
+          return next;
+        });
         requestAnimationFrame(() => {
           commentsListRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
         });
       } else {
+        console.log('[handlePostComment] data.comment missing, re-fetching');
         await fetchComments(targetVideoId);
       }
       showToast('评论发表成功');
     } else if (data) {
+      console.log('[handlePostComment] API failed, data:', data);
       showToast(data.message || '评论失败', true);
     } else {
+      console.log('[handlePostComment] API call returned null');
       showToast('评论失败：请求没有发送成功', true);
     }
   };
