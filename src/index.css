@@ -195,6 +195,21 @@ body {
   fill: #fff;
 }
 
+.va-logo {
+  color: #fff;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-style: italic;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+  transform: skewX(-8deg);
+  text-shadow: 0 0 14px rgba(103, 232, 249, .36);
+}
+
+.logo-icon.va-logo {
+  font-size: 24px;
+}
+
 .auth-logo h2 {
   font-size: 28px;
   font-weight: 900;
@@ -361,6 +376,10 @@ body {
   width: 20px;
   height: 20px;
   fill: #fff;
+}
+
+.dashboard-header .logo-area .mini-logo.va-logo {
+  font-size: 16px;
 }
 
 .dashboard-header .logo-area h1 {
@@ -1152,6 +1171,200 @@ body {
 
 .log-duration {
   color: #6a6a72;
+}
+
+.admin-console-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.admin-console-tab {
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 20px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 16px;
+}
+
+.admin-console-tab.active {
+  background: var(--primary-cyan);
+  border-color: var(--primary-cyan);
+  color: #000;
+}
+
+.database-console-card {
+  background: #000;
+  border: 1px solid rgba(255,255,255,.24);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  min-height: 420px;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.database-table-sidebar {
+  border-right: 1px solid rgba(255,255,255,.14);
+  padding: 14px;
+  overflow-y: auto;
+}
+
+.database-sidebar-title {
+  color: var(--text-muted);
+  font-family: var(--font-code);
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+
+.database-table-btn {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  font-family: var(--font-code);
+  font-size: 12px;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  padding: 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.database-table-btn:hover,
+.database-table-btn.active {
+  background: rgba(103,232,249,.1);
+  border-color: rgba(103,232,249,.42);
+}
+
+.database-table-btn strong {
+  color: var(--primary-cyan);
+  font-size: 11px;
+}
+
+.database-table-view {
+  min-width: 0;
+  padding: 16px;
+}
+
+.database-table-header {
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.database-table-header h3 {
+  color: #fff;
+  font-family: var(--font-code);
+  font-size: 16px;
+  margin: 0 0 4px;
+}
+
+.database-table-header p {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 0;
+}
+
+.database-schema-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 10px;
+}
+
+.database-schema-row span {
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 8px;
+  color: #fff;
+  flex: 0 0 auto;
+  font-family: var(--font-code);
+  font-size: 11px;
+  padding: 7px 9px;
+}
+
+.database-schema-row small {
+  color: var(--primary-cyan);
+  display: block;
+  margin-top: 3px;
+}
+
+.database-data-scroll {
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 8px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.database-data-table {
+  border-collapse: collapse;
+  color: #fff;
+  font-family: var(--font-code);
+  font-size: 11px;
+  min-width: 720px;
+  width: 100%;
+}
+
+.database-data-table th,
+.database-data-table td {
+  border-bottom: 1px solid rgba(255,255,255,.1);
+  max-width: 260px;
+  overflow: hidden;
+  padding: 9px 10px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-data-table th {
+  background: #070707;
+  color: var(--primary-cyan);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.database-null {
+  color: rgba(255,255,255,.36);
+  font-style: italic;
+}
+
+.database-empty {
+  color: var(--text-muted);
+  padding: 40px 16px;
+  text-align: center;
+}
+
+.database-pagination {
+  align-items: center;
+  color: var(--text-muted);
+  display: flex;
+  font-size: 12px;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.database-pagination .dev-action-btn {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+}
+
+.database-pagination .dev-action-btn:disabled {
+  cursor: not-allowed;
+  opacity: .45;
 }
 
 .terminal-empty-text {
@@ -2262,6 +2475,10 @@ body {
   width: 20px;
   height: 20px;
   fill: #fff;
+}
+
+.webapp-header .mini-logo.va-logo {
+  font-size: 16px;
 }
 
 /* 视图切换 Tab */

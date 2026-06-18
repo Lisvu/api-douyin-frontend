@@ -199,6 +199,11 @@ export default function App() {
   // Live Developer Stats & Logs dashboard
   const [devStats, setDevStats] = useState({ users: 0, videos: 0, likes: 0, views: 0, averageResponseTimeMs: 0, totalRequestsLogged: 0 });
   const [devLogs, setDevLogs] = useState([]);
+  const [adminPanelTab, setAdminPanelTab] = useState('logs');
+  const [databaseTables, setDatabaseTables] = useState([]);
+  const [selectedDatabaseTable, setSelectedDatabaseTable] = useState('');
+  const [databaseTableData, setDatabaseTableData] = useState(null);
+  const [isLoadingDatabase, setIsLoadingDatabase] = useState(false);
   const [logDetailModal, setLogDetailModal] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   // Batch delete management on own profile page
@@ -289,14 +294,22 @@ export default function App() {
     let intervalId;
     if (token && user?.role === 'ADMIN' && currentView === 'admin') {
       fetchDevDashboardData();
+      fetchDatabaseTables();
       intervalId = setInterval(() => {
         fetchDevDashboardData();
+        fetchDatabaseTables();
       }, 10000);
     }
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
   }, [token, user?.role, currentView]);
+
+  useEffect(() => {
+    if (currentView === 'admin' && user?.role === 'ADMIN' && adminPanelTab === 'database' && selectedDatabaseTable) {
+      fetchDatabaseTableData(selectedDatabaseTable);
+    }
+  }, [currentView, user?.role, adminPanelTab, selectedDatabaseTable]);
 
   useEffect(() => {
     let intervalId;
@@ -1166,6 +1179,29 @@ export default function App() {
     const logsData = await apiFetch(`${API_PREFIX}/admin/request-logs`, { silent: true, timeoutMs: 15000 });
     if (logsData && logsData.success) {
       setDevLogs(logsData.logs || []);
+    }
+  };
+
+  const fetchDatabaseTables = async () => {
+    const data = await apiFetch(`${API_PREFIX}/admin/database/tables`, { silent: true, timeoutMs: 15000 });
+    if (data && data.success) {
+      setDatabaseTables(data.tables || []);
+      if (!selectedDatabaseTable && (data.tables || []).length > 0) {
+        setSelectedDatabaseTable(data.tables[0].name);
+      }
+    }
+  };
+
+  const fetchDatabaseTableData = async (tableName, offset = 0) => {
+    if (!tableName) return;
+    setIsLoadingDatabase(true);
+    const data = await apiFetch(`${API_PREFIX}/admin/database/tables/${encodeURIComponent(tableName)}?limit=50&offset=${offset}`, {
+      silent: true,
+      timeoutMs: 15000
+    });
+    setIsLoadingDatabase(false);
+    if (data && data.success) {
+      setDatabaseTableData(data);
     }
   };
 
@@ -2560,11 +2596,7 @@ export default function App() {
         <div className="auth-wrapper">
           <div className="auth-card">
             <div className="auth-logo">
-              <div className="logo-icon">
-                <svg viewBox="0 0 24 24">
-                  <path d="M12.53.07C13.74 0 14.8.08 15.65.17c0 1.25.33 2.37.98 3.32.74 1.09 1.83 1.83 3.07 2.18.52.15 1.05.24 1.8.29v3.42c-.93 0-1.78-.18-2.61-.55-.78-.35-1.5-.86-2.07-1.52v7.7c0 1.63-.44 3.09-1.32 4.25-1.12 1.48-2.82 2.35-4.8 2.35-1.53 0-2.92-.51-3.95-1.52C5.7 19.16 5.11 17.57 5.11 15.68c0-1.84.58-3.41 1.64-4.52C7.8 10.12 9.21 9.6 10.74 9.6c.58 0 1.13.08 1.79.25v3.6c-.53-.18-1.07-.27-1.63-.27-.82 0-1.55.28-2.09.8-.57.54-.88 1.3-.88 2.27 0 .97.31 1.72.88 2.26.54.52 1.27.8 2.09.8.84 0 1.58-.28 2.12-.8.57-.54.89-1.29.89-2.26V.07z" />
-                </svg>
-              </div>
+              <div className="logo-icon va-logo" aria-label="Vidora logo">VA</div>
               <h2>Vidora 短视频社区</h2>
               <p>{authMode === 'login' ? '智能算法推荐与实时开发监控' : '创建开发者账户'}</p>
             </div>
@@ -2621,11 +2653,7 @@ export default function App() {
       <div className="webapp-container">
         <header className="webapp-header">
           <div className="logo-area">
-            <div className="mini-logo">
-              <svg viewBox="0 0 24 24">
-                <path d="M12.53.07C13.74 0 14.8.08 15.65.17c0 1.25.33 2.37.98 3.32.74 1.09 1.83 1.83 3.07 2.18.52.15 1.05.24 1.8.29v3.42c-.93 0-1.78-.18-2.61-.55-.78-.35-1.5-.86-2.07-1.52v7.7c0 1.63-.44 3.09-1.32 4.25-1.12 1.48-2.82 2.35-4.8 2.35-1.53 0-2.92-.51-3.95-1.52C5.7 19.16 5.11 17.57 5.11 15.68c0-1.84.58-3.41 1.64-4.52C7.8 10.12 9.21 9.6 10.74 9.6c.58 0 1.13.08 1.79.25v3.6c-.53-.18-1.07-.27-1.63-.27-.82 0-1.55.28-2.09.8-.57.54-.88 1.3-.88 2.27 0 .97.31 1.72.88 2.26.54.52 1.27.8 2.09.8.84 0 1.58-.28 2.12-.8.57-.54.89-1.29.89-2.26V.07z" />
-              </svg>
-            </div>
+            <div className="mini-logo va-logo" aria-label="Vidora logo">VA</div>
             <h1>Vidora 短视频社区</h1>
           </div>
 
@@ -3749,21 +3777,90 @@ export default function App() {
                       <div className="stats-card"><div className="stats-card-header"><span>全站总互动(点赞)</span><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div><div className="stats-card-value">{devStats.likes}</div></div>
                       <div className="stats-card highlight"><div className="stats-card-header"><span>平均 API 延迟</span><svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg></div><div className="stats-card-value" style={{ color: 'var(--primary-cyan)' }}>{devStats.averageResponseTimeMs} <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>ms</span></div></div>
                     </div>
-                    <div className="terminal-card">
-                      <div className="terminal-header"><div className="terminal-buttons"><div className="terminal-dot" /><div className="terminal-dot" /><div className="terminal-dot" /></div><div className="terminal-title">spring-boot-server-requests.log</div><button className="terminal-clear-btn" onClick={() => setDevLogs([])}>Clear</button></div>
-                      <div className="terminal-console">
-                        {devLogs.length > 0 ? devLogs.map((log, i) => (
-                            <div key={i} className="log-row">
-                              <span className="log-timestamp">[{log.timestamp}]</span>
-                              <span className={`log-method ${log.method}`}>{log.method}</span>
-                              <span className="log-url">{log.url}</span>
-                              <span className={`log-status ${log.statusCode >= 200 && log.statusCode < 300 ? 'status-2xx' : log.statusCode >= 400 && log.statusCode < 500 ? 'status-4xx' : 'status-5xx'}`}>{log.statusCode}</span>
-                              <span className="log-duration" style={{ color: log.durationMs > 500 ? '#ff4d4d' : 'inherit' }}>{log.durationMs}ms</span>
-                              <button type="button" onClick={() => setLogDetailModal(log)} style={{ background: 'transparent', border: 0, color: 'var(--primary-cyan)', cursor: 'pointer', fontSize: 12, marginLeft: 8, padding: 0 }}>详情</button>
-                            </div>
-                        )) : <div className="terminal-empty-text">⌨️ 等待 API 网络请求中... 切换到"视频"页操作即可看见实时 Spring Boot 拦截日志！</div>}
-                      </div>
+                    <div className="admin-console-tabs">
+                      <button className={`admin-console-tab ${adminPanelTab === 'logs' ? 'active' : ''}`} onClick={() => setAdminPanelTab('logs')}>请求日志</button>
+                      <button className={`admin-console-tab ${adminPanelTab === 'database' ? 'active' : ''}`} onClick={() => setAdminPanelTab('database')}>数据库视图</button>
                     </div>
+                    {adminPanelTab === 'logs' ? (
+                        <div className="terminal-card">
+                          <div className="terminal-header"><div className="terminal-buttons"><div className="terminal-dot" /><div className="terminal-dot" /><div className="terminal-dot" /></div><div className="terminal-title">spring-boot-server-requests.log</div><button className="terminal-clear-btn" onClick={() => setDevLogs([])}>Clear</button></div>
+                          <div className="terminal-console">
+                            {devLogs.length > 0 ? devLogs.map((log, i) => (
+                                <div key={i} className="log-row">
+                                  <span className="log-timestamp">[{log.timestamp}]</span>
+                                  <span className={`log-method ${log.method}`}>{log.method}</span>
+                                  <span className="log-url">{log.url}</span>
+                                  <span className={`log-status ${log.statusCode >= 200 && log.statusCode < 300 ? 'status-2xx' : log.statusCode >= 400 && log.statusCode < 500 ? 'status-4xx' : 'status-5xx'}`}>{log.statusCode}</span>
+                                  <span className="log-duration" style={{ color: log.durationMs > 500 ? '#ff4d4d' : 'inherit' }}>{log.durationMs}ms</span>
+                                  <button type="button" onClick={() => setLogDetailModal(log)} style={{ background: 'transparent', border: 0, color: 'var(--primary-cyan)', cursor: 'pointer', fontSize: 12, marginLeft: 8, padding: 0 }}>详情</button>
+                                </div>
+                            )) : <div className="terminal-empty-text">等待 API 网络请求中，切换到视频页操作即可看见实时 Spring Boot 拦截日志</div>}
+                          </div>
+                        </div>
+                    ) : (
+                        <div className="database-console-card">
+                          <aside className="database-table-sidebar">
+                            <div className="database-sidebar-title">Public Tables</div>
+                            {databaseTables.map(table => (
+                                <button
+                                  key={table.name}
+                                  type="button"
+                                  className={`database-table-btn ${selectedDatabaseTable === table.name ? 'active' : ''}`}
+                                  onClick={() => setSelectedDatabaseTable(table.name)}
+                                >
+                                  <span>{table.name}</span>
+                                  <strong>{table.rowCount}</strong>
+                                </button>
+                            ))}
+                          </aside>
+                          <section className="database-table-view">
+                            <div className="database-table-header">
+                              <div>
+                                <h3>{selectedDatabaseTable || '选择数据表'}</h3>
+                                <p>{databaseTableData ? `${databaseTableData.totalRows} 行 · ${databaseTableData.columns?.length || 0} 个字段` : '管理员只读数据库视图'}</p>
+                              </div>
+                              <button className="terminal-clear-btn" onClick={() => fetchDatabaseTableData(selectedDatabaseTable)}>Refresh</button>
+                            </div>
+                            {isLoadingDatabase ? (
+                                <div className="database-empty">正在读取数据库...</div>
+                            ) : databaseTableData ? (
+                                <>
+                                  <div className="database-schema-row">
+                                    {(databaseTableData.columns || []).map(column => (
+                                        <span key={column.column_name}>{column.column_name}<small>{column.data_type}</small></span>
+                                    ))}
+                                  </div>
+                                  <div className="database-data-scroll">
+                                    <table className="database-data-table">
+                                      <thead>
+                                        <tr>
+                                          {(databaseTableData.columns || []).map(column => <th key={column.column_name}>{column.column_name}</th>)}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {(databaseTableData.rows || []).map((row, rowIndex) => (
+                                            <tr key={row.id ?? rowIndex}>
+                                              {(databaseTableData.columns || []).map(column => {
+                                                const value = row[column.column_name];
+                                                return <td key={column.column_name}>{value === null || value === undefined ? <span className="database-null">NULL</span> : String(value)}</td>;
+                                              })}
+                                            </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                  <div className="database-pagination">
+                                    <button className="dev-action-btn" disabled={(databaseTableData.offset || 0) <= 0} onClick={() => fetchDatabaseTableData(selectedDatabaseTable, Math.max(0, (databaseTableData.offset || 0) - databaseTableData.limit))}>上一页</button>
+                                    <span>{(databaseTableData.offset || 0) + 1} - {Math.min((databaseTableData.offset || 0) + databaseTableData.limit, databaseTableData.totalRows)} / {databaseTableData.totalRows}</span>
+                                    <button className="dev-action-btn" disabled={!databaseTableData.hasMore} onClick={() => fetchDatabaseTableData(selectedDatabaseTable, (databaseTableData.offset || 0) + databaseTableData.limit)}>下一页</button>
+                                  </div>
+                                </>
+                            ) : (
+                                <div className="database-empty">暂无数据库表数据</div>
+                            )}
+                          </section>
+                        </div>
+                    )}
                     <div className="dev-controls-card">
                       <h3>🎛️ 算法与数据库交互中心</h3>
                       <div className="controls-flex">
