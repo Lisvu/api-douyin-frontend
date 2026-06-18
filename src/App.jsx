@@ -161,8 +161,11 @@ export default function App() {
   const [commentsPagination, setCommentsPagination] = useState({ nextCursor: null, hasMore: false });
   const [commentsTotalCount, setCommentsTotalCount] = useState(0);
   const [commentDraft, setCommentDraft] = useState('');
+  const [replyTarget, setReplyTarget] = useState(null);
   const [isPostingComment, setIsPostingComment] = useState(false);
   const [isLoadingComments, setIsLoadingComments] = useState(false);
+  const [targetCommentId, setTargetCommentId] = useState(null);
+  const [isGeneratingCommentReply, setIsGeneratingCommentReply] = useState(false);
   const commentsListRef = useRef(null);
 
   // User profile page
@@ -182,6 +185,12 @@ export default function App() {
   const [uploadDesc, setUploadDesc] = useState('');
   const [uploadVideo, setUploadVideo] = useState(null);
   const [uploadCover, setUploadCover] = useState(null);
+  const [uploadCoverPreview, setUploadCoverPreview] = useState('');
+  const [aiCoverCandidates, setAiCoverCandidates] = useState([]);
+  const [aiCoverSuggestion, setAiCoverSuggestion] = useState(null);
+  const [isGeneratingCoverSuggestion, setIsGeneratingCoverSuggestion] = useState(false);
+  const [aiCategorySuggestion, setAiCategorySuggestion] = useState(null);
+  const [isGeneratingCategorySuggestion, setIsGeneratingCategorySuggestion] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isGeneratingCopy, setIsGeneratingCopy] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -222,6 +231,25 @@ export default function App() {
   const preloadedMediaRef = useRef([]);
   const shownDanmakuIdsRef = useRef(new Set());
   const lastTimeRef = useRef(0);
+  const uploadCoverPreviewRef = useRef('');
+  const aiCoverCandidatesRef = useRef([]);
+
+  useEffect(() => {
+    uploadCoverPreviewRef.current = uploadCoverPreview;
+  }, [uploadCoverPreview]);
+
+  useEffect(() => {
+    aiCoverCandidatesRef.current = aiCoverCandidates;
+  }, [aiCoverCandidates]);
+
+  useEffect(() => {
+    return () => {
+      if (uploadCoverPreviewRef.current) {
+        URL.revokeObjectURL(uploadCoverPreviewRef.current);
+      }
+      aiCoverCandidatesRef.current.forEach(item => item.url && URL.revokeObjectURL(item.url));
+    };
+  }, []);
 
   const DANMAKU_COLORS = ['#ffffff', '#ffeb3b', '#ff5252', '#69f0ae', '#40c4ff', '#ff80ab', '#b388ff'];
   const DANMAKU_EMOJIS = ['😀', '😂', '😍', '👍', '❤️', '🔥', '🎉', '💯', '😭', '🤣', '✨', '🥰', '😎', '🤔', '👏', '🙏'];
@@ -1235,12 +1263,78 @@ export default function App() {
     await markLikeNotificationsRead();
   };
 
-  const openCommentsPanel = async (videoId) => {
+  const findLoadedVideoById = (videoId) => {
+    if (!videoId) return null;
+    const allLoadedVideos = [
+      ...videos,
+      ...featuredVideos,
+      ...profileVideos,
+      ...likedVideos,
+      ...sharedVideos,
+      ...watchLaterVideos,
+    ];
+    return allLoadedVideos.find(video => video?.id === videoId) || null;
+  };
+
+  const openCommentsPanel = async (videoId, options = {}) => {
+    const targetId = options.targetCommentId ?? null;
     setCommentsVideoId(videoId);
     setIsCommentsOpen(true);
     setCommentDraft('');
+    setReplyTarget(null);
     setComments([]);
-    await fetchComments(videoId);
+    setTargetCommentId(targetId);
+    let data = await fetchComments(videoId);
+    let attempts = 0;
+    while (
+      targetId &&
+      data?.success &&
+      data.pagination?.hasMore &&
+      !(data.comments || []).some(item => item.id === targetId) &&
+      attempts < 5
+    ) {
+      data = await fetchComments(videoId, data.pagination.nextCursor, true);
+      attempts += 1;
+    }
+  };
+
+  const getNotificationCommentId = (notification) => {
+    if (notification?.commentId) return Number(notification.commentId);
+    if (notification?.parentCommentId) return Number(notification.parentCommentId);
+    if (typeof notification?.likeId === 'string' && notification.likeId.startsWith('C-')) {
+      const id = Number(notification.likeId.slice(2));
+      return Number.isFinite(id) ? id : null;
+    }
+    if (typeof notification?.likeId === 'string' && notification.likeId.startsWith('R-')) {
+      const id = Number(notification.likeId.slice(2));
+      return Number.isFinite(id) ? id : null;
+    }
+    return null;
+  };
+
+  const handleNotificationClick = async (notification) => {
+    if (notification.type !== 'comment' && notification.type !== 'reply') return;
+    if (!notification.videoId) {
+      showToast('无法定位评论：通知缺少视频信息', true);
+      return;
+    }
+    const commentId = getNotificationCommentId(notification);
+    let targetVideo = findLoadedVideoById(notification.videoId);
+    if (!targetVideo && notification.videoTitle) {
+      const searchData = await apiFetch(`${API_PREFIX}/videos?q=${encodeURIComponent(notification.videoTitle)}`, { silent: true });
+      const searchVideos = (searchData?.videos || []).map(normalizeFeedVideo);
+      targetVideo = searchVideos.find(video => video?.id === notification.videoId)
+        || searchVideos.find(video => video?.title === notification.videoTitle)
+        || searchVideos[0]
+        || null;
+    }
+    if (!targetVideo) {
+      showToast('无法定位评论对应的视频', true);
+      return;
+    }
+    startSingleVideoPlayback(targetVideo);
+    setIsLikeNotificationsOpen(false);
+    await openCommentsPanel(targetVideo.id, { targetCommentId: commentId });
   };
 
   const fetchComments = async (videoId, cursor = null, append = false) => {
@@ -1267,7 +1361,17 @@ export default function App() {
         hasMore: data.pagination?.hasMore ?? false
       });
     }
+    return data;
   };
+
+  useEffect(() => {
+    if (!isCommentsOpen || !targetCommentId) return;
+    const targetEl = commentsListRef.current?.querySelector(`[data-comment-id="${targetCommentId}"]`);
+    if (!targetEl) return;
+    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const timer = setTimeout(() => setTargetCommentId(null), 2500);
+    return () => clearTimeout(timer);
+  }, [isCommentsOpen, comments, targetCommentId]);
 
   const handlePostComment = async (e) => {
     e?.preventDefault();
@@ -1285,7 +1389,10 @@ export default function App() {
     setIsPostingComment(true);
     const data = await apiFetch(`${API_PREFIX}/videos/${targetVideoId}/comments`, {
       method: 'POST',
-      body: JSON.stringify({ content })
+      body: JSON.stringify({
+        content,
+        parentId: replyTarget?.id ?? null
+      })
     });
     setIsPostingComment(false);
 
@@ -1293,20 +1400,33 @@ export default function App() {
       const newCount = data.commentsCount ?? commentsTotalCount + 1;
       console.log('[handlePostComment] success, data.comment:', data.comment, 'data.commentsCount:', data.commentsCount);
       setCommentDraft('');
+      setReplyTarget(null);
       setCommentsTotalCount(newCount);
       updateVideoCommentCount(targetVideoId, newCount);
       setCommentsPagination({ nextCursor: null, hasMore: false });
       if (data.comment) {
         setComments(prev => {
-          const next = [
-            { ...data.comment, justPosted: true },
-            ...prev.filter(item => item.id !== data.comment.id)
-          ];
+          const postedComment = { ...data.comment, justPosted: true, replies: data.comment.replies || [] };
+          const rootCommentId = replyTarget?.rootCommentId ?? postedComment.parentId;
+          const next = postedComment.parentId
+            ? prev.map(item => item.id === rootCommentId
+              ? { ...item, replies: [...(item.replies || []), postedComment] }
+              : item)
+            : [
+              postedComment,
+              ...prev.filter(item => item.id !== postedComment.id)
+            ];
           console.log('[handlePostComment] setComments, prev length:', prev.length, 'next length:', next.length);
           return next;
         });
         requestAnimationFrame(() => {
-          commentsListRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+          if (data.comment.parentId) {
+            commentsListRef.current
+              ?.querySelector(`[data-comment-id="${data.comment.id}"]`)
+              ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          } else {
+            commentsListRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+          }
         });
       } else {
         console.log('[handlePostComment] data.comment missing, re-fetching');
@@ -1320,6 +1440,53 @@ export default function App() {
       console.log('[handlePostComment] API call returned null');
       showToast('评论失败：请求没有发送成功', true);
     }
+  };
+
+  const handleGenerateCommentReply = async () => {
+    if (!commentDraft.trim()) {
+      showToast('先输入评论内容再润色', true);
+      return;
+    }
+    setIsGeneratingCommentReply(true);
+    try {
+      const targetVideo = findLoadedVideoById(commentsVideoId || activeVideo?.id);
+      const data = await apiFetch(`${API_PREFIX}/ai/comment-reply`, {
+        method: 'POST',
+        body: JSON.stringify({
+          videoTitle: targetVideo?.title || '',
+          comment: commentDraft,
+          style: '自然'
+        }),
+        timeoutMs: 180000,
+      });
+      if (data && data.success) {
+        const reply = data.reply || {};
+        const polished = reply.polished || reply.reply;
+        if (polished) {
+          setCommentDraft(polished);
+          showToast('已润色评论');
+        }
+      } else if (data) {
+        showToast(data.message || 'AI 润色失败', true);
+      }
+    } finally {
+      setIsGeneratingCommentReply(false);
+    }
+  };
+
+  const startReplyingToComment = (comment, rootComment = null) => {
+    const root = rootComment || comment;
+    setReplyTarget({
+      ...comment,
+      rootCommentId: root.id,
+      rootUsername: root.username,
+    });
+    setCommentDraft('');
+  };
+
+  const cancelReply = () => {
+    setReplyTarget(null);
+    setCommentDraft('');
   };
 
   const resetBatchManage = () => {
@@ -1346,6 +1513,9 @@ export default function App() {
     setCurrentView('profile');
     setIsLoadingProfile(true);
     await fetchUserProfile(userId);
+    if (userId !== user?.id) {
+      await fetchRelation(userId);
+    }
     await fetchProfileVideos('published', userId);
     setIsLoadingProfile(false);
   };
@@ -1559,6 +1729,13 @@ export default function App() {
           friendCount: data.friendCount ?? prev.friendCount,
         } : prev);
       }
+      if (currentView === 'profile' && profileUserId === targetUserId) {
+        setProfileUser(prev => prev ? {
+          ...prev,
+          followerCount: data.followerCount ?? Math.max(0, (prev.followerCount ?? 0) + (isFollowing ? -1 : 1)),
+          friendCount: data.friendCount ?? prev.friendCount,
+        } : prev);
+      }
     } else if (data) showToast(data.message, true);
   };
 
@@ -1751,6 +1928,203 @@ export default function App() {
       };
       video.src = url;
     });
+  };
+
+  const extractVideoFrameAtRatio = (videoFile, ratio = 0.1) => {
+    return new Promise((resolve, reject) => {
+      const video = document.createElement('video');
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const url = URL.createObjectURL(videoFile);
+      const timeout = setTimeout(() => {
+        URL.revokeObjectURL(url);
+        reject(new Error('Frame extraction timed out'));
+      }, 15000);
+      video.preload = 'metadata';
+      video.muted = true;
+      video.playsInline = true;
+      video.crossOrigin = 'anonymous';
+      video.onloadedmetadata = () => {
+        const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
+        video.currentTime = Math.max(0, Math.min(duration - 0.05, duration * ratio));
+      };
+      video.onseeked = () => {
+        clearTimeout(timeout);
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          URL.revokeObjectURL(url);
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error('Failed to create blob from canvas'));
+          }
+        }, 'image/jpeg', 0.9);
+      };
+      video.onerror = () => {
+        clearTimeout(timeout);
+        URL.revokeObjectURL(url);
+        reject(new Error('Failed to load video for frame extraction'));
+      };
+      video.src = url;
+    });
+  };
+
+  const buildCoverCandidate = (blob, index, ratio, source = 'manual') => {
+    const file = new File([blob], `cover-${source}-${index}.jpg`, { type: 'image/jpeg' });
+    return {
+      id: `${source}-${index}-${Date.now()}`,
+      file,
+      ratio,
+      url: URL.createObjectURL(file),
+    };
+  };
+
+  const resetAiUploadSuggestions = () => {
+    setAiCoverCandidates(prev => {
+      prev.forEach(item => item.url && URL.revokeObjectURL(item.url));
+      return [];
+    });
+    if (uploadCoverPreview) {
+      URL.revokeObjectURL(uploadCoverPreview);
+    }
+    setUploadCoverPreview('');
+    setAiCoverSuggestion(null);
+    setAiCategorySuggestion(null);
+  };
+
+  const handleUploadVideoChange = async (file) => {
+    resetAiUploadSuggestions();
+    setUploadVideo(file || null);
+    setUploadCover(null);
+    if (!file) return;
+    try {
+      const firstFrame = await extractVideoFrameAtRatio(file, 0.08);
+      const firstCandidate = buildCoverCandidate(firstFrame, 0, 0.08, 'auto');
+      setAiCoverCandidates([firstCandidate]);
+      setUploadCover(firstCandidate.file);
+      setUploadCoverPreview(firstCandidate.url);
+    } catch (err) {
+      console.warn('Initial cover preview extraction failed:', err);
+    }
+  };
+
+  const handleManualCoverFileChange = (file) => {
+    if (!file) return;
+    if (uploadCoverPreview) {
+      URL.revokeObjectURL(uploadCoverPreview);
+    }
+    const previewUrl = URL.createObjectURL(file);
+    setUploadCover(file);
+    setUploadCoverPreview(previewUrl);
+    setAiCoverSuggestion(null);
+  };
+
+  const generateCoverCandidates = async () => {
+    if (!uploadVideo) {
+      showToast('请先选择视频文件', true);
+      return [];
+    }
+    const ratios = [0.12, 0.5, 0.88];
+    const candidates = [];
+    for (let i = 0; i < ratios.length; i += 1) {
+      try {
+        const blob = await extractVideoFrameAtRatio(uploadVideo, ratios[i]);
+        candidates.push(buildCoverCandidate(blob, i, ratios[i], 'ai'));
+      } catch (err) {
+        console.warn('Cover candidate extraction failed:', ratios[i], err);
+      }
+    }
+    setAiCoverCandidates(prev => {
+      prev.forEach(item => item.url && URL.revokeObjectURL(item.url));
+      return candidates;
+    });
+    return candidates;
+  };
+
+  const handleGenerateCoverSuggestion = async () => {
+    if (!uploadVideo) {
+      showToast('请先选择视频文件', true);
+      return;
+    }
+    setIsGeneratingCoverSuggestion(true);
+    try {
+      const candidates = await generateCoverCandidates();
+      if (!candidates.length) {
+        showToast('无法从视频中提取候选封面', true);
+        return;
+      }
+      const formData = new FormData();
+      formData.append('filename', uploadVideo.name);
+      formData.append('title', uploadTitle);
+      candidates.forEach(candidate => {
+        formData.append('frames', candidate.file);
+        formData.append('ratios', String(candidate.ratio));
+      });
+      const data = await apiFetch(`${API_PREFIX}/ai/cover-suggestions`, {
+        method: 'POST',
+        body: formData,
+        timeoutMs: 180000,
+      });
+      if (data && data.success) {
+        const suggestion = data.suggestion || {};
+        const selectedIndex = Number.isInteger(suggestion.selectedIndex) ? suggestion.selectedIndex : 0;
+        const selected = candidates[selectedIndex] || candidates[0];
+        setAiCoverSuggestion(suggestion);
+        setUploadCover(selected.file);
+        setUploadCoverPreview(selected.url);
+        showToast('AI 已推荐封面');
+      } else if (data) {
+        showToast(data.message || 'AI 封面建议失败', true);
+      }
+    } finally {
+      setIsGeneratingCoverSuggestion(false);
+    }
+  };
+
+  const handleUseCoverCandidate = (candidate) => {
+    setUploadCover(candidate.file);
+    setUploadCoverPreview(candidate.url);
+    setAiCoverSuggestion(null);
+  };
+
+  const handleGenerateCategorySuggestion = async () => {
+    if (!uploadVideo) {
+      showToast('请先选择视频文件', true);
+      return;
+    }
+    setIsGeneratingCategorySuggestion(true);
+    try {
+      let frameFile = uploadCover;
+      if (!frameFile) {
+        const frameBlob = await extractVideoFirstFrame(uploadVideo);
+        frameFile = new File([frameBlob], 'video-frame.jpg', { type: 'image/jpeg' });
+      }
+      const formData = new FormData();
+      formData.append('filename', uploadVideo.name);
+      formData.append('title', uploadTitle);
+      formData.append('description', uploadDesc);
+      if (frameFile) {
+        formData.append('frame', frameFile);
+      }
+      const data = await apiFetch(`${API_PREFIX}/ai/video-tags`, {
+        method: 'POST',
+        body: formData,
+        timeoutMs: 180000,
+      });
+      if (data && data.success) {
+        const tags = data.tags || {};
+        setAiCategorySuggestion(tags);
+        const tagText = Array.isArray(tags.tags) ? tags.tags.map(tag => `#${String(tag).replace(/^#/, '')}`).join(' ') : '';
+        setUploadDesc(prev => [prev, tagText].filter(Boolean).join(prev && tagText ? '\n' : ''));
+        showToast('AI 已完成分类');
+      } else if (data) {
+        showToast(data.message || 'AI 分类失败', true);
+      }
+    } finally {
+      setIsGeneratingCategorySuggestion(false);
+    }
   };
 
   const handlePublish = async (e) => {
@@ -2619,8 +2993,8 @@ export default function App() {
 
                   {/* 关注页：左侧用户列表 + 右侧视频 */}
                   {navTab === 'following' && (
-                      <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
-                        <div style={{ width: 260, flexShrink: 0, background: 'rgba(0,0,0,0.6)', borderRight: '1px solid rgba(255,255,255,0.08)', overflowY: 'auto', padding: '16px 0' }}>
+                      <div className="following-layout" style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+                        <div className="following-user-list" style={{ width: 260, flexShrink: 0, background: 'rgba(0,0,0,0.6)', borderRight: '1px solid rgba(255,255,255,0.08)', overflowY: 'auto', padding: '16px 0' }}>
                           <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.4)', padding: '0 16px 12px', textTransform: 'uppercase', letterSpacing: 1 }}>我关注的人</div>
                           {isLoadingFollowing ? (
                               <div style={{ textAlign: 'center', padding: 32 }}><div className="loading-spinner" style={{ width: 28, height: 28, margin: '0 auto' }} /></div>
@@ -2677,7 +3051,6 @@ export default function App() {
                                       {activeVideo.user_id === user?.id && <span className="my-publish-badge">我的发布</span>}
                                     </div>
                                     <div className="video-caption">{activeVideo.title}{activeVideo.description && ` — ${activeVideo.description}`}</div>
-                                    <div className="video-hashtags">#智能算法推荐 #SpringBoot #React</div>
                                   </div>
                                   <div className="web-video-controls" onClick={(e) => e.stopPropagation()}>
                                     <div className="web-video-progress-track" onClick={handleSeekVideo}><div className="web-video-progress-fill" style={{ width: `${progressPercent}%` }} /></div>
@@ -2803,7 +3176,6 @@ export default function App() {
                                     {activeVideo.user_id === user?.id && <span className="my-publish-badge">我的发布</span>}
                                   </div>
                                   <div className="video-caption">{activeVideo.title}{activeVideo.description && ` — ${activeVideo.description}`}</div>
-                                  <div className="video-hashtags">#智能算法推荐 #SpringBoot #React</div>
                                 </div>
                                 <div className="web-video-controls" onClick={(e) => e.stopPropagation()}>
                                   <div className="web-video-progress-track" onClick={handleSeekVideo}><div className="web-video-progress-fill" style={{ width: `${progressPercent}%` }} /></div>
@@ -2912,7 +3284,14 @@ export default function App() {
                                      transition: 'all 0.15s'
                                    }}
                               >
-                                <img src={getAvatarUrl(f)} alt="" style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, border: activeFriend?.id === f.id ? '2px solid var(--primary-cyan)' : 'none' }} />
+                                <img
+                                    src={getAvatarUrl(f)}
+                                    alt=""
+                                    className="clickable-profile"
+                                    onClick={(e) => { e.stopPropagation(); openUserProfile(f.id); }}
+                                    title="进入个人主页"
+                                    style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, border: activeFriend?.id === f.id ? '2px solid var(--primary-cyan)' : 'none' }}
+                                />
                                 <div style={{ minWidth: 0, flex: 1 }}>
                                   <div style={{ fontSize: 14, fontWeight: 600, color: activeFriend?.id === f.id ? 'var(--primary-cyan)' : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{f.username}</div>
                                   {f.displayName && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>{f.displayName}</div>}
@@ -2930,7 +3309,14 @@ export default function App() {
                               <>
                                 {/* 聊天头部 */}
                                 <div style={{ height: 60, borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', padding: '0 24px', background: 'rgba(0,0,0,0.2)' }}>
-                                  <img src={getAvatarUrl(activeFriend)} alt="" style={{ width: 32, height: 32, borderRadius: '50%', marginRight: 12 }} />
+                                  <img
+                                      src={getAvatarUrl(activeFriend)}
+                                      alt=""
+                                      className="clickable-profile"
+                                      onClick={() => openUserProfile(activeFriend.id)}
+                                      title="进入个人主页"
+                                      style={{ width: 32, height: 32, borderRadius: '50%', marginRight: 12 }}
+                                  />
                                   <span style={{ fontSize: 16, fontWeight: 600, color: '#fff' }}>@{activeFriend.username}</span>
                                   {activeFriend.displayName && (
                                       <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', marginLeft: 8 }}>({activeFriend.displayName})</span>
@@ -3153,6 +3539,16 @@ export default function App() {
                                   </>
                               )}
                             </label>
+                            {profileUserId !== user?.id && (
+                                <button
+                                    type="button"
+                                    className={`profile-avatar-follow-btn ${followMap[profileUserId]?.isFollowing ? (followMap[profileUserId]?.isFriend ? 'is-friend' : 'is-following') : ''}`}
+                                    onClick={(e) => handleFollowToggle(profileUserId, e)}
+                                    title={followMap[profileUserId]?.isFollowing ? (followMap[profileUserId]?.isFriend ? '互关好友' : '取消关注') : '关注'}
+                                >
+                                  {followMap[profileUserId]?.isFollowing ? (followMap[profileUserId]?.isFriend ? '♥' : '✓') : '+'}
+                                </button>
+                            )}
                           </div>
                           <div className="profile-info">
                             <h2>@{profileUser.username}</h2>
@@ -3403,7 +3799,11 @@ export default function App() {
                       </div>
                   ) : comments.length > 0 ? (
                       comments.map(item => (
-                          <div key={item.id} className={`comment-item ${item.justPosted ? 'just-posted' : ''}`}>
+                          <div
+                              key={item.id}
+                              data-comment-id={item.id}
+                              className={`comment-item ${item.justPosted ? 'just-posted' : ''} ${targetCommentId === item.id ? 'target-comment' : ''}`}
+                          >
                             <div
                                 className="comment-avatar clickable-profile"
                                 onClick={() => { setIsCommentsOpen(false); openUserProfile(item.userId); }}
@@ -3424,6 +3824,42 @@ export default function App() {
                               <div className="comment-text">
                                 {item.content}
                               </div>
+                              <button
+                                  type="button"
+                                  className="comment-reply-btn"
+                                  onClick={() => startReplyingToComment(item)}
+                              >
+                                回复
+                              </button>
+                              {(item.replies || []).length > 0 && (
+                                  <div className="comment-replies">
+                                    {(item.replies || []).map(reply => (
+                                        <div
+                                            key={reply.id}
+                                            data-comment-id={reply.id}
+                                            className={`comment-reply-item ${reply.justPosted ? 'just-posted' : ''} ${targetCommentId === reply.id ? 'target-comment' : ''}`}
+                                        >
+                                          <div className="comment-author-row">
+                                            <span
+                                                className="comment-author clickable-profile"
+                                                onClick={() => { setIsCommentsOpen(false); openUserProfile(reply.userId); }}
+                                            >
+                                              @{reply.username}
+                                            </span>
+                                            <span className="comment-time">{formatNotificationTime(reply.createdAt)}</span>
+                                          </div>
+                                          <div className="comment-text">{reply.content}</div>
+                                          <button
+                                              type="button"
+                                              className="comment-reply-btn"
+                                              onClick={() => startReplyingToComment(reply, item)}
+                                          >
+                                            回复
+                                          </button>
+                                        </div>
+                                    ))}
+                                  </div>
+                              )}
                             </div>
                           </div>
                       ))
@@ -3446,9 +3882,15 @@ export default function App() {
                 )}
 
                 <div className="comment-compose">
+                  {replyTarget && (
+                      <div className="reply-target-bar">
+                        <span>回复 @{replyTarget.username}</span>
+                        <button type="button" onClick={cancelReply}>取消</button>
+                      </div>
+                  )}
                   <input
                       type="text"
-                      placeholder="写下你的评论..."
+                      placeholder={replyTarget ? `回复 @${replyTarget.username}...` : '写下你的评论...'}
                       value={commentDraft}
                       onChange={e => setCommentDraft(e.target.value)}
                       onKeyDown={e => {
@@ -3459,6 +3901,14 @@ export default function App() {
                       maxLength={500}
                       disabled={isPostingComment}
                   />
+                  <button
+                      type="button"
+                      className="comment-ai-btn"
+                      onClick={handleGenerateCommentReply}
+                      disabled={isGeneratingCommentReply || isPostingComment || !commentDraft.trim()}
+                  >
+                    {isGeneratingCommentReply ? 'AI 中...' : 'AI 润色'}
+                  </button>
                   <button
                       type="button"
                       onClick={handlePostComment}
@@ -3490,6 +3940,15 @@ export default function App() {
                           <div
                               key={item.likeId}
                               className={`like-notification-item ${item.read ? 'is-read' : 'is-unread'}`}
+                              onClick={() => handleNotificationClick(item)}
+                              role={item.type === 'comment' || item.type === 'reply' ? 'button' : undefined}
+                              tabIndex={item.type === 'comment' || item.type === 'reply' ? 0 : undefined}
+                              onKeyDown={(e) => {
+                                if ((item.type === 'comment' || item.type === 'reply') && (e.key === 'Enter' || e.key === ' ')) {
+                                  e.preventDefault();
+                                  handleNotificationClick(item);
+                                }
+                              }}
                               style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
                           >
                             <div className="like-notification-avatar" style={{ position: 'relative' }}>
@@ -3522,6 +3981,7 @@ export default function App() {
                                 {item.type === 'like' && '赞了你的视频'}
                                 {item.type === 'favorite' && '收藏了你的视频'}
                                 {item.type === 'comment' && `评论了你的视频：“${item.content}”`}
+                                {item.type === 'reply' && `回复了你的评论：“${item.content}”`}
                               </div>
                               <div className="like-notification-video" style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 🎬 {item.videoTitle || '未命名视频'}
@@ -3562,7 +4022,7 @@ export default function App() {
         {/* Publish Video Modal */}
         {isUploadOpen && (
             <div className="modal-overlay" onClick={() => !isUploading && setIsUploadOpen(false)}>
-              <div className="modal-content" onClick={e => e.stopPropagation()}>
+              <div className="modal-content upload-modal-content" onClick={e => e.stopPropagation()}>
                 <button className="modal-close-btn" onClick={() => !isUploading && setIsUploadOpen(false)}>
                   <svg viewBox="0 0 24 24">
                     <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
@@ -3622,8 +4082,7 @@ export default function App() {
                               type="file"
                               accept="video/*"
                               style={{ display: 'none' }}
-                              onChange={e => setUploadVideo(e.target.files[0])}
-                              required
+                              onChange={e => handleUploadVideoChange(e.target.files[0])}
                           />
                         </div>
                         {uploadVideo && (
@@ -3646,29 +4105,78 @@ export default function App() {
                       </div>
 
                       <div className="upload-form-group">
-                        <label>上传封面图片 (选填)</label>
+                        <div className="upload-ai-title-row">
+                          <label>封面建议</label>
+                          <button type="button" className="ai-mini-btn" onClick={handleGenerateCoverSuggestion} disabled={!uploadVideo || isGeneratingCoverSuggestion}>
+                            {isGeneratingCoverSuggestion ? 'AI 推荐中...' : 'AI 推荐封面'}
+                          </button>
+                        </div>
                         <div
-                            className="file-upload-zone"
+                            className="cover-preview-zone"
                             onClick={() => document.getElementById('cover-input-file').click()}
                         >
-                          <svg viewBox="0 0 24 24">
-                            <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
-                          </svg>
-                          <p>点击选择封面配图 (JPG / PNG / WEBP)</p>
-                          <span>若不传封面，系统将自动截取视频第一帧作为封面</span>
+                          {uploadCoverPreview ? (
+                              <img src={uploadCoverPreview} alt="封面预览" className="cover-preview-image" />
+                          ) : (
+                              <div className="cover-preview-empty">
+                                <svg viewBox="0 0 24 24">
+                                  <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
+                                </svg>
+                                <p>点击这里手动选择封面图片</p>
+                                <span>也可以先让 AI 推荐再手动改</span>
+                              </div>
+                          )}
                           <input
                               id="cover-input-file"
                               type="file"
                               accept="image/*"
                               style={{ display: 'none' }}
-                              onChange={e => setUploadCover(e.target.files[0])}
+                              onChange={e => handleManualCoverFileChange(e.target.files[0])}
                           />
                         </div>
-                        {uploadCover && (
-                            <div className="file-name-indicator cover-file">
-                              🖼️ 选定封面: {uploadCover.name}
+                        {aiCoverSuggestion && (
+                            <div className="ai-suggestion-card">
+                              <div>AI 建议：第 {aiCoverSuggestion.selectedIndex + 1} 张</div>
+                              <p>{aiCoverSuggestion.reason || '这张更适合做封面'}</p>
+                              {aiCoverSuggestion.overlayText && <span>推荐文案：{aiCoverSuggestion.overlayText}</span>}
                             </div>
                         )}
+                        {aiCoverCandidates.length > 0 && (
+                            <div className="cover-candidate-grid">
+                              {aiCoverCandidates.map((candidate, index) => (
+                                  <button
+                                      key={candidate.id}
+                                      type="button"
+                                      className={`cover-candidate-item ${uploadCoverPreview === candidate.url ? 'active' : ''}`}
+                                      onClick={() => handleUseCoverCandidate(candidate)}
+                                  >
+                                    <img src={candidate.url} alt={`候选封面 ${index + 1}`} />
+                                    <span>{Math.round(candidate.ratio * 100)}%</span>
+                                  </button>
+                              ))}
+                            </div>
+                        )}
+                        {uploadCover && (
+                            <div className="file-name-indicator cover-file">
+                              🖼️ 当前封面: {uploadCover.name}
+                            </div>
+                        )}
+                      </div>
+
+                      <div className="ai-copy-panel">
+                        <button
+                            type="button"
+                            className="ai-copy-btn"
+                            onClick={handleGenerateCategorySuggestion}
+                            disabled={!uploadVideo || isGeneratingCategorySuggestion}
+                        >
+                          {isGeneratingCategorySuggestion ? 'AI 分类中...' : 'AI 自动分类'}
+                        </button>
+                        <span>
+                          {aiCategorySuggestion?.category
+                            ? `当前推荐分类：${aiCategorySuggestion.category}`
+                            : '根据视频内容自动判断所属分类'}
+                        </span>
                       </div>
 
                       <div className="modal-action-row">
